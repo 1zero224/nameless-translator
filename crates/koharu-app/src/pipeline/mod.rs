@@ -8,6 +8,7 @@
 pub mod artifacts;
 pub mod engine;
 mod engines;
+pub mod inpaint_compat;
 
 pub use artifacts::Artifact;
 pub use engine::{
@@ -15,6 +16,7 @@ pub use engine::{
     build_order,
 };
 pub use engines::support;
+pub use inpaint_compat::resolve_inpainter_alias;
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};

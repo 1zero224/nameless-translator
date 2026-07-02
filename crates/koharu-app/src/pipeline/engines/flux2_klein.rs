@@ -11,8 +11,8 @@ use koharu_ml::inpainting::mask::expand_mask_to_bubble_region_for_inpainting;
 use crate::pipeline::artifacts::Artifact;
 use crate::pipeline::engine::{Engine, EngineCtx, EngineInfo};
 use crate::pipeline::engines::support::{
-    find_image_node, find_mask_node, image_dimensions, load_source_image, text_node_to_region,
-    text_nodes, upsert_image_blob,
+    find_image_node, find_mask_node, image_dimensions, load_source_image,
+    mark_repair_succeeded_ops, text_node_to_region, text_nodes, upsert_image_blob,
 };
 
 pub struct Model(Flux2Klein);
@@ -58,14 +58,21 @@ impl Engine for Model {
                 .inpaint_with_reference(&image, &mask, None, &Flux2InpaintOptions::default())?;
         let (w, h) = image_dimensions(&result);
         let blob = ctx.blobs.put_webp(&result)?;
-        Ok(vec![upsert_image_blob(
+        let mut ops = vec![upsert_image_blob(
             ctx.scene,
             ctx.page,
             ImageRole::Inpainted,
             blob,
             w,
             h,
-        )])
+        )];
+        ops.extend(mark_repair_succeeded_ops(
+            ctx.scene,
+            ctx.page,
+            "flux2-klein",
+            ctx.options.region,
+        ));
+        Ok(ops)
     }
 }
 

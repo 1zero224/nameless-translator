@@ -11,14 +11,15 @@ use anyhow::Result;
 use async_trait::async_trait;
 use koharu_core::{
     ImageRole, MaskRole, NodeDataPatch, NodePatch, Op, TextDataPatch, TextStyle, Transform,
+    WorkflowStatus,
 };
 use koharu_llm::Language;
 
 use crate::pipeline::artifacts::Artifact;
 use crate::pipeline::engine::{Engine, EngineCtx, EngineInfo};
 use crate::pipeline::engines::support::{
-    find_image_node, find_mask_node, image_dimensions, load_source_image, text_nodes,
-    upsert_image_blob,
+    find_image_node, find_mask_node, image_dimensions, lettering_text_nodes, load_source_image,
+    update_text_workflow_op, upsert_image_blob, workflow_with_lettering_status,
 };
 use crate::renderer::{PageRenderOptions, RenderBlockInput};
 
@@ -48,7 +49,7 @@ impl Engine for Model {
         };
 
         // Build renderer input from every text node with a non-empty translation.
-        let nodes = text_nodes(ctx.scene, ctx.page);
+        let nodes = lettering_text_nodes(ctx.scene, ctx.page);
         let inputs: Vec<RenderBlockInput> = nodes
             .iter()
             .filter_map(|(id, transform, t)| {
@@ -98,10 +99,13 @@ impl Engine for Model {
         let mut ops = Vec::with_capacity(output.blocks.len() + 1);
         for block_out in output.blocks {
             let sprite_ref = ctx.blobs.put_raw(&block_out.sprite)?;
-            let existing_style = inputs
+            let source_text = nodes
                 .iter()
-                .find(|i| i.node_id == block_out.node_id)
-                .and_then(|i| i.style.clone());
+                .find(|(node_id, _, _)| *node_id == block_out.node_id)
+                .map(|(_, _, text)| *text);
+            let existing_style = source_text.and_then(|text| text.style.clone());
+            let workflow = source_text
+                .map(|text| workflow_with_lettering_status(text, WorkflowStatus::Succeeded));
             ops.push(Op::UpdateNode {
                 page: ctx.page,
                 id: block_out.node_id,
@@ -117,6 +121,7 @@ impl Engine for Model {
                         // later renders treat implicit predicted colors as
                         // explicit black overrides.
                         style: preserve_existing_style(existing_style),
+                        workflow,
                         ..Default::default()
                     })),
                     transform: None,
@@ -124,6 +129,19 @@ impl Engine for Model {
                 },
                 prev: NodePatch::default(),
             });
+        }
+        for (node_id, _, text) in nodes {
+            let has_translation = text
+                .translation
+                .as_deref()
+                .is_some_and(|t| !t.trim().is_empty());
+            if !has_translation {
+                ops.push(update_text_workflow_op(
+                    ctx.page,
+                    node_id,
+                    workflow_with_lettering_status(text, WorkflowStatus::Skipped),
+                ));
+            }
         }
 
         // Final composite → Image { Rendered } upsert.

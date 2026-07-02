@@ -30,6 +30,7 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(put_current_project))
         .routes(routes!(delete_current_project))
         .routes(routes!(delete_project))
+        .routes(routes!(get_project_cover))
         .routes(routes!(export_current_project))
 }
 
@@ -52,6 +53,32 @@ async fn list_projects(State(app): State<AppState>) -> ApiResult<Json<ListProjec
     let config = (**app.config.load()).clone();
     let projects = project_dirs::list_projects(&config).map_err(ApiError::internal)?;
     Ok(Json(ListProjectsResponse { projects }))
+}
+
+#[utoipa::path(
+    get,
+    path = "/projects/{id}/cover",
+    params(("id" = String, Path, description = "Project ID")),
+    responses((status = 200, content_type = "application/octet-stream"))
+)]
+async fn get_project_cover(
+    State(app): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<Response> {
+    let config = (**app.config.load()).clone();
+    let path = project_dirs::project_path(&config, &id)
+        .map_err(|e| ApiError::bad_request(format!("{e:#}")))?;
+    if !path.exists() {
+        return Err(ApiError::not_found(format!("project {id}")));
+    }
+    let bytes = project_dirs::read_project_cover_at(&path)
+        .map_err(ApiError::internal)?
+        .ok_or_else(|| ApiError::not_found(format!("project {id} has no cover")))?;
+    Ok(bytes_response_with_filename(
+        bytes,
+        "cover",
+        "application/octet-stream",
+    ))
 }
 
 // ---------------------------------------------------------------------------

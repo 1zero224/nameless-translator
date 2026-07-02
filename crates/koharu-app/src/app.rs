@@ -19,7 +19,7 @@ use anyhow::Result;
 use arc_swap::{ArcSwap, ArcSwapOption};
 use camino::Utf8PathBuf;
 use dashmap::DashMap;
-use koharu_core::{AppEvent, DownloadProgress, JobSummary, LlmStateStatus};
+use koharu_core::{AppEvent, DownloadProgress, ImageRole, JobSummary, LlmStateStatus, NodeKind};
 use koharu_runtime::{ComputePolicy, RuntimeManager};
 use tokio::sync::Mutex;
 
@@ -253,11 +253,35 @@ pub fn project_summary(session: &ProjectSession) -> koharu_core::ProjectSummary 
         .and_then(|m| m.duration_since(UNIX_EPOCH).ok())
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0);
+    let scene = session.scene.read();
+    let cover = scene.pages.values().find_map(|page| {
+        page.nodes.values().find_map(|node| match &node.kind {
+            NodeKind::Image(img) if img.role == ImageRole::Source => Some(img.blob.clone()),
+            _ => None,
+        })
+    });
+    let page_count = scene.pages.len();
+    let text_block_count = scene
+        .pages
+        .values()
+        .map(|page| {
+            page.nodes
+                .values()
+                .filter(|node| matches!(node.kind, NodeKind::Text(_)))
+                .count()
+        })
+        .sum();
+    let cover_url = cover
+        .as_ref()
+        .map(|_| crate::projects::project_cover_url(&id));
     koharu_core::ProjectSummary {
         id,
-        name: session.scene.read().project.name.clone(),
+        name: scene.project.name.clone(),
         path: session.dir.to_string(),
         updated_at_ms,
+        cover_url,
+        page_count,
+        text_block_count,
     }
 }
 

@@ -6,8 +6,9 @@
 use anyhow::{Context, Result};
 use image::{DynamicImage, GenericImageView};
 use koharu_core::{
-    BlobRef, ImageData, ImageRole, MaskData, MaskRole, Node, NodeDataPatch, NodeId, NodeKind, Op,
-    PageId, ReadingOrder, Scene, TextData, Transform,
+    BlobRef, FontPrediction, FontWorkflowTrace, ImageData, ImageRole, MaskData, MaskRole, Node,
+    NodeDataPatch, NodeId, NodeKind, Op, PageId, ReadingOrder, Region, RepairWorkflowTrace, Scene,
+    TextData, TextDataPatch, TextWorkflow, TextWorkflowMode, Transform, WorkflowStatus,
 };
 
 use crate::blobs::BlobStore;
@@ -69,6 +70,114 @@ pub fn text_nodes(scene: &Scene, page: PageId) -> Vec<(NodeId, &Transform, &Text
             _ => None,
         })
         .collect()
+}
+
+/// Text nodes that should participate in the lettering pipeline.
+pub fn lettering_text_nodes(scene: &Scene, page: PageId) -> Vec<(NodeId, &Transform, &TextData)> {
+    text_nodes(scene, page)
+        .into_iter()
+        .filter(|(_, _, text)| text.workflow.modes.contains(&TextWorkflowMode::Lettering))
+        .collect()
+}
+
+/// Text nodes that should participate in repair workflows.
+pub fn repair_text_nodes(scene: &Scene, page: PageId) -> Vec<(NodeId, &Transform, &TextData)> {
+    text_nodes(scene, page)
+        .into_iter()
+        .filter(|(_, _, text)| text.workflow.modes.contains(&TextWorkflowMode::Repair))
+        .collect()
+}
+
+/// Build a workflow-only text patch. Engine outputs stay in normal Op/history
+/// flow instead of maintaining a side-channel status store.
+pub fn update_text_workflow_op(page: PageId, node_id: NodeId, workflow: TextWorkflow) -> Op {
+    Op::UpdateNode {
+        page,
+        id: node_id,
+        patch: koharu_core::NodePatch {
+            data: Some(NodeDataPatch::Text(TextDataPatch {
+                workflow: Some(workflow),
+                ..Default::default()
+            })),
+            transform: None,
+            visible: None,
+        },
+        prev: koharu_core::NodePatch::default(),
+    }
+}
+
+/// Record the font detector's observable output on the workflow trace.
+pub fn workflow_with_font_trace(text: &TextData, prediction: &FontPrediction) -> TextWorkflow {
+    let mut workflow = text.workflow.clone();
+    let selected = prediction.named_fonts.first();
+    workflow.font_trace = Some(FontWorkflowTrace {
+        primary_category: selected.map(|font| {
+            if font.serif {
+                "serif".to_string()
+            } else {
+                "sans_serif".to_string()
+            }
+        }),
+        secondary_category: selected.and_then(|font| font.language.clone()),
+        candidate_fonts: prediction
+            .named_fonts
+            .iter()
+            .take(8)
+            .map(|font| font.name.clone())
+            .collect(),
+        selected_font: selected.map(|font| font.name.clone()),
+        notes: selected
+            .map(|font| vec![format!("yuzumarker probability {:.3}", font.probability)])
+            .unwrap_or_default(),
+    });
+    workflow
+}
+
+pub fn workflow_with_lettering_status(text: &TextData, status: WorkflowStatus) -> TextWorkflow {
+    let mut workflow = text.workflow.clone();
+    workflow.lettering_status = status;
+    workflow
+}
+
+pub fn workflow_with_repair_success(text: &TextData, model: &str) -> TextWorkflow {
+    let mut workflow = text.workflow.clone();
+    workflow.repair_status = WorkflowStatus::Succeeded;
+    workflow.repair_trace = Some(RepairWorkflowTrace {
+        model: Some(model.to_string()),
+        ..Default::default()
+    });
+    workflow
+}
+
+pub fn mark_repair_succeeded_ops(
+    scene: &Scene,
+    page: PageId,
+    model: &str,
+    region: Option<Region>,
+) -> Vec<Op> {
+    repair_text_nodes(scene, page)
+        .into_iter()
+        .filter(|(_, transform, _)| {
+            region
+                .as_ref()
+                .is_none_or(|r| transform_intersects_region(transform, r))
+        })
+        .map(|(node_id, _, text)| {
+            update_text_workflow_op(page, node_id, workflow_with_repair_success(text, model))
+        })
+        .collect()
+}
+
+fn transform_intersects_region(transform: &Transform, region: &Region) -> bool {
+    let ax0 = transform.x;
+    let ay0 = transform.y;
+    let ax1 = transform.x + transform.width;
+    let ay1 = transform.y + transform.height;
+    let bx0 = region.x as f32;
+    let by0 = region.y as f32;
+    let bx1 = region.x.saturating_add(region.width) as f32;
+    let by1 = region.y.saturating_add(region.height) as f32;
+    ax0 < bx1 && ax1 > bx0 && ay0 < by1 && ay1 > by0
 }
 
 /// Convert a scene `(Transform, TextData)` pair into a `koharu-ml` `TextRegion`
@@ -462,7 +571,7 @@ pub fn sort_manga_reading_order<T>(blocks: &mut [([f32; 4], T)], order: ReadingO
 #[cfg(test)]
 mod tests {
     use super::*;
-    use koharu_core::ReadingOrder;
+    use koharu_core::{NodeId, ReadingOrder, TextWorkflowMode};
 
     #[test]
     fn test_reading_order_sort() {
@@ -483,5 +592,57 @@ mod tests {
         sort_manga_reading_order(&mut blocks, ReadingOrder::Ltr);
         assert_eq!(blocks[0].1, "left");
         assert_eq!(blocks[1].1, "right");
+    }
+
+    #[test]
+    fn mark_repair_succeeded_ops_filters_to_intersecting_region() {
+        let page_id = PageId::new();
+        let near_id = NodeId::new();
+        let far_id = NodeId::new();
+        let mut scene = Scene::default();
+        let mut page = koharu_core::Page::new("p1", 500, 500);
+        page.id = page_id;
+        for (node_id, x) in [(near_id, 10.0), (far_id, 300.0)] {
+            page.nodes.insert(
+                node_id,
+                Node {
+                    id: node_id,
+                    transform: Transform {
+                        x,
+                        y: 10.0,
+                        width: 40.0,
+                        height: 40.0,
+                        rotation_deg: 0.0,
+                    },
+                    visible: true,
+                    kind: NodeKind::Text(TextData {
+                        workflow: TextWorkflow {
+                            modes: vec![TextWorkflowMode::Repair],
+                            ..Default::default()
+                        },
+                        ..Default::default()
+                    }),
+                },
+            );
+        }
+        scene.pages.insert(page_id, page);
+
+        let ops = mark_repair_succeeded_ops(
+            &scene,
+            page_id,
+            "lama-manga",
+            Some(Region {
+                x: 0,
+                y: 0,
+                width: 100,
+                height: 100,
+            }),
+        );
+
+        assert_eq!(ops.len(), 1);
+        match &ops[0] {
+            Op::UpdateNode { id, .. } => assert_eq!(*id, near_id),
+            other => panic!("expected UpdateNode, got {other:?}"),
+        }
     }
 }

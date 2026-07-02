@@ -42,6 +42,7 @@ import { applyOp } from '@/lib/io/scene'
 import { ops } from '@/lib/ops'
 import { useEditorUiStore } from '@/lib/stores/editorUiStore'
 import { useSelectionStore } from '@/lib/stores/selectionStore'
+import { DEFAULT_MANUAL_WORKFLOW } from '@/lib/workflow'
 
 const BRUSH_CURSOR = 'none'
 
@@ -114,7 +115,7 @@ export function Workspace() {
         id: nodeId,
         transform,
         visible: true,
-        kind: { text: { lockLayoutBox: true } },
+        kind: { text: { lockLayoutBox: true, workflow: DEFAULT_MANUAL_WORKFLOW } },
       }
       await applyOp(ops.addNode(page.id, at, node))
       useSelectionStore.getState().selectMany([nodeId])

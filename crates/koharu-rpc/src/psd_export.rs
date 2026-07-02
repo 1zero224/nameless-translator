@@ -3,7 +3,7 @@
 //! Walks the current scene, resolves every blob reference, and feeds the
 //! result into `koharu_psd::write_document` one page at a time.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
@@ -11,12 +11,12 @@ use image::DynamicImage;
 use koharu_app::ProjectSession;
 use koharu_core::{
     BlobRef, FontPrediction, ImageRole, MaskRole, NodeKind, PageId, Scene, TextAlign, TextData,
-    TextDirection, TextStyle,
+    TextDirection, TextResultMode, TextStyle,
 };
 use koharu_psd::{
-    PsdBlobRef, PsdDocument, PsdExportOptions, PsdFontPrediction, PsdNamedFontPrediction,
-    PsdShaderEffect, PsdTextAlign, PsdTextBlock, PsdTextDirection, PsdTextStyle, ResolvedDocument,
-    write_document,
+    PsdBlobRef, PsdDocument, PsdExportOptions, PsdFontPrediction, PsdImageLayer,
+    PsdNamedFontPrediction, PsdShaderEffect, PsdTextAlign, PsdTextBlock, PsdTextDirection,
+    PsdTextStyle, ResolvedDocument, write_document,
 };
 
 /// Resolved page artifacts ready to hand to `koharu-psd`.
@@ -27,6 +27,7 @@ struct ResolvedPage {
     inpainted: Option<DynamicImage>,
     rendered: Option<DynamicImage>,
     brush: Option<DynamicImage>,
+    image_layers: HashMap<PsdBlobRef, DynamicImage>,
     block_images: HashMap<PsdBlobRef, DynamicImage>,
 }
 
@@ -50,6 +51,7 @@ pub fn psd_bytes_for_page(
         inpainted,
         rendered,
         brush,
+        image_layers,
         block_images,
     } = resolve_page_blobs(
         session,
@@ -66,6 +68,7 @@ pub fn psd_bytes_for_page(
         inpainted: inpainted.as_ref(),
         rendered: rendered.as_ref(),
         brush_layer: brush.as_ref(),
+        image_layer_images: &image_layers,
         block_images: &block_images,
     };
     let opts = PsdExportOptions::default();
@@ -86,11 +89,15 @@ fn resolve_page_blobs(
     let mut inpainted: Option<DynamicImage> = None;
     let mut rendered: Option<DynamicImage> = None;
     let mut brush: Option<DynamicImage> = None;
+    let mut image_layers: HashMap<PsdBlobRef, DynamicImage> = HashMap::new();
     let mut block_images: HashMap<PsdBlobRef, DynamicImage> = HashMap::new();
     let mut text_blocks: Vec<PsdTextBlock> = Vec::new();
+    let mut psd_image_layers: Vec<PsdImageLayer> = Vec::new();
     let mut fonts = vec!["AdobeInvisFont".to_string()];
     let mut font_map: HashMap<String, usize> = HashMap::new();
     font_map.insert("AdobeInvisFont".to_string(), 0);
+    let repair_layers_to_export = repair_layers_to_export(page);
+    let repair_layers_to_skip = repair_layers_to_skip(page);
 
     for (node_id, node) in &page.nodes {
         match &node.kind {
@@ -101,9 +108,32 @@ fn resolve_page_blobs(
                     ImageRole::Inpainted => inpainted = Some(decoded),
                     ImageRole::Rendered => rendered = Some(decoded),
                     ImageRole::Custom => {
-                        // Custom layers rendered as-is on top of inpainted; they
-                        // don't have a dedicated PSD slot in the current export,
-                        // so they land in the final composite only.
+                        if repair_layers_to_skip.contains(node_id) {
+                            continue;
+                        }
+                        if !repair_layers_to_export.is_empty()
+                            && repair_layers_to_export.contains(node_id)
+                            && !node.visible
+                        {
+                            // Bound repair layers follow the text block's result mode, so
+                            // export even if the user hid them while comparing variants.
+                        }
+                        let psd_ref = blob_ref_to_psd(&img.blob);
+                        image_layers.insert(psd_ref.clone(), decoded);
+                        psd_image_layers.push(PsdImageLayer {
+                            id: node_id.to_string(),
+                            name: img
+                                .name
+                                .clone()
+                                .unwrap_or_else(|| "Image Layer".to_string()),
+                            x: node.transform.x,
+                            y: node.transform.y,
+                            width: node.transform.width.max(img.natural_width as f32),
+                            height: node.transform.height.max(img.natural_height as f32),
+                            visible: node.visible || repair_layers_to_export.contains(node_id),
+                            opacity: img.opacity,
+                            image: psd_ref,
+                        });
                     }
                 }
             }
@@ -119,6 +149,9 @@ fn resolve_page_blobs(
                 }
             }
             NodeKind::Text(text) => {
+                if text.workflow.result_mode == TextResultMode::Repair {
+                    continue;
+                }
                 if let Some(sprite) = text.sprite.as_ref() {
                     let decoded = session.blobs.load_image(sprite)?;
                     block_images.insert(blob_ref_to_psd(sprite), decoded);
@@ -161,6 +194,7 @@ fn resolve_page_blobs(
         width: page.width,
         height: page.height,
         text_blocks,
+        image_layers: psd_image_layers,
         fonts,
     };
     Ok(ResolvedPage {
@@ -170,8 +204,33 @@ fn resolve_page_blobs(
         inpainted,
         rendered,
         brush,
+        image_layers,
         block_images,
     })
+}
+
+fn repair_layers_to_export(page: &koharu_core::Page) -> HashSet<koharu_core::NodeId> {
+    page.nodes
+        .values()
+        .filter_map(|node| match &node.kind {
+            NodeKind::Text(text) if text.workflow.result_mode == TextResultMode::Repair => {
+                text.workflow.repair_layer
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+fn repair_layers_to_skip(page: &koharu_core::Page) -> HashSet<koharu_core::NodeId> {
+    page.nodes
+        .values()
+        .filter_map(|node| match &node.kind {
+            NodeKind::Text(text) if text.workflow.result_mode != TextResultMode::Repair => {
+                text.workflow.repair_layer
+            }
+            _ => None,
+        })
+        .collect()
 }
 
 /// Encode a single page's image for `role` as PNG bytes. Returns `None` if
@@ -316,9 +375,12 @@ fn blob_ref_to_psd(r: &BlobRef) -> PsdBlobRef {
 
 #[cfg(test)]
 mod tests {
-    use koharu_core::{BlobRef, NodeId, TextData, Transform};
+    use koharu_core::{
+        BlobRef, ImageData, ImageRole, Node, NodeId, NodeKind, Page, TextData, TextResultMode,
+        TextWorkflow, Transform,
+    };
 
-    use super::text_to_psd;
+    use super::{repair_layers_to_export, repair_layers_to_skip, text_to_psd};
 
     #[test]
     fn text_to_psd_uses_sprite_transform_for_rendered_text_layer() {
@@ -378,5 +440,71 @@ mod tests {
         assert_eq!(block.y, node_transform.y);
         assert_eq!(block.width, node_transform.width);
         assert_eq!(block.height, node_transform.height);
+    }
+
+    #[test]
+    fn repair_result_mode_selects_bound_custom_layer_for_export() {
+        let mut page = Page::new("page", 800, 600);
+        let repair_layer = NodeId::new();
+        page.nodes.insert(
+            repair_layer,
+            Node {
+                id: repair_layer,
+                transform: Transform::default(),
+                visible: false,
+                kind: NodeKind::Image(ImageData {
+                    role: ImageRole::Custom,
+                    blob: BlobRef::new("repair"),
+                    opacity: 1.0,
+                    natural_width: 800,
+                    natural_height: 600,
+                    name: Some("Repair result".to_string()),
+                }),
+            },
+        );
+        page.nodes.insert(
+            NodeId::new(),
+            Node {
+                id: NodeId::new(),
+                transform: Transform::default(),
+                visible: true,
+                kind: NodeKind::Text(TextData {
+                    workflow: TextWorkflow {
+                        result_mode: TextResultMode::Repair,
+                        repair_layer: Some(repair_layer),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                }),
+            },
+        );
+
+        assert!(repair_layers_to_export(&page).contains(&repair_layer));
+        assert!(!repair_layers_to_skip(&page).contains(&repair_layer));
+    }
+
+    #[test]
+    fn lettering_result_mode_skips_bound_repair_layer() {
+        let mut page = Page::new("page", 800, 600);
+        let repair_layer = NodeId::new();
+        page.nodes.insert(
+            NodeId::new(),
+            Node {
+                id: NodeId::new(),
+                transform: Transform::default(),
+                visible: true,
+                kind: NodeKind::Text(TextData {
+                    workflow: TextWorkflow {
+                        result_mode: TextResultMode::Lettering,
+                        repair_layer: Some(repair_layer),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                }),
+            },
+        );
+
+        assert!(!repair_layers_to_export(&page).contains(&repair_layer));
+        assert!(repair_layers_to_skip(&page).contains(&repair_layer));
     }
 }

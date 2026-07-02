@@ -71,8 +71,13 @@ async fn start_pipeline(
     let session = app
         .current_session()
         .ok_or_else(|| ApiError::bad_request("no project open"))?;
+    let steps = req
+        .steps
+        .iter()
+        .map(|id| koharu_app::pipeline::resolve_inpainter_alias(id).into_owned())
+        .collect::<Vec<_>>();
     // Validate every step resolves to a registered engine before spawning.
-    for id in &req.steps {
+    for id in &steps {
         pipeline::Registry::find(id).map_err(|e| ApiError::bad_request(format!("{e:#}")))?;
     }
     let spec = PipelineSpec {
@@ -80,7 +85,7 @@ async fn start_pipeline(
             Some(pages) => Scope::Pages(pages),
             None => Scope::WholeProject,
         },
-        steps: req.steps,
+        steps,
         options: PipelineRunOptions {
             target_language: req.target_language,
             system_prompt: req.system_prompt,

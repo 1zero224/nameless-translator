@@ -7,7 +7,7 @@ use koharu_secrets::SecretStore;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use utoipa::ToSchema;
 
-use crate::pipeline::{Artifact, Registry};
+use crate::pipeline::{Artifact, Registry, resolve_inpainter_alias};
 
 const CONFIG_FILE: &str = "config.toml";
 const REDACTED: &str = "[REDACTED]";
@@ -231,7 +231,7 @@ pub fn apply_patch(config: &mut AppConfig, patch: koharu_core::ConfigPatch) {
             config.pipeline.translator = v;
         }
         if let Some(v) = p.inpainter {
-            config.pipeline.inpainter = v;
+            config.pipeline.inpainter = resolve_inpainter_alias(&v).into_owned();
         }
         if let Some(v) = p.renderer {
             config.pipeline.renderer = v;
@@ -264,6 +264,7 @@ pub fn apply_patch(config: &mut AppConfig, patch: koharu_core::ConfigPatch) {
 fn validate_pipeline_config(config: &mut AppConfig) -> bool {
     let defaults = PipelineConfig::default();
     let mut changed = false;
+    changed |= normalize_pipeline_aliases(config);
 
     changed |= validate_engine_name(
         "detector",
@@ -315,6 +316,15 @@ fn validate_pipeline_config(config: &mut AppConfig) -> bool {
     );
 
     changed
+}
+
+fn normalize_pipeline_aliases(config: &mut AppConfig) -> bool {
+    let canonical = resolve_inpainter_alias(&config.pipeline.inpainter);
+    if canonical.as_ref() == config.pipeline.inpainter {
+        return false;
+    }
+    config.pipeline.inpainter = canonical.into_owned();
+    true
 }
 
 fn validate_engine_name(
@@ -464,5 +474,22 @@ mod tests {
         );
 
         assert_eq!(config.pipeline.renderer, PipelineConfig::default().renderer);
+    }
+
+    #[test]
+    fn apply_patch_normalizes_balloonstranslator_inpainter_aliases() {
+        let mut config = AppConfig::default();
+        apply_patch(
+            &mut config,
+            ConfigPatch {
+                pipeline: Some(PipelineConfigPatch {
+                    inpainter: Some("bt_aot".to_string()),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+        );
+
+        assert_eq!(config.pipeline.inpainter, "aot-inpainting");
     }
 }

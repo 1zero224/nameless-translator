@@ -16,6 +16,7 @@ pub mod llm;
 pub mod pipeline;
 pub mod projects;
 pub mod renderer;
+pub mod scene_snapshot;
 pub mod session;
 pub mod utils;
 

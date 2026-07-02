@@ -1,6 +1,7 @@
 'use client'
 
 import {
+  addImageLayer,
   applyCommand,
   createPages,
   createPagesFromPaths,
@@ -26,6 +27,7 @@ import type {
   ExportProjectRequest,
   Op,
   OpenProjectRequest,
+  PageId,
   ProjectSummary,
   ReadingOrder,
   SceneSnapshot,
@@ -184,12 +186,24 @@ export async function uploadPagesByPaths(paths: string[], replace: boolean): Pro
 
 export async function uploadKhrArchive(file: File): Promise<ProjectSummary> {
   const bytes = await file.arrayBuffer()
-  const summary = await importProject({
-    body: bytes,
+  const archive = new Blob([bytes], { type: 'application/zip' })
+  const summary = await importProject(archive, {
     headers: { 'Content-Type': 'application/zip' },
   })
   await invalidateScene()
   return summary
+}
+
+export async function uploadRepairImageLayer(
+  pageId: PageId,
+  textNodeId: string,
+  file: File,
+): Promise<string> {
+  const form = new FormData()
+  form.append('file', file, file.name)
+  const res = await addImageLayer(pageId, { repairText: textNodeId }, { body: form })
+  await invalidateScene()
+  return res.node
 }
 
 // Export ---------------------------------------------------------------------

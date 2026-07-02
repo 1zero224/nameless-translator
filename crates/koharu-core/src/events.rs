@@ -192,6 +192,17 @@ pub struct ProjectSummary {
     /// UNIX epoch). Used for "recent projects" ordering.
     #[serde(default)]
     pub updated_at_ms: u64,
+    /// API URL for the first page source image, used by the client bookshelf
+    /// cover. Project summaries may describe projects that are not currently
+    /// open, so this is project-scoped instead of a session-scoped `BlobRef`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cover_url: Option<String>,
+    /// Number of pages currently saved in the project scene.
+    #[serde(default)]
+    pub page_count: usize,
+    /// Number of text blocks across all pages.
+    #[serde(default)]
+    pub text_block_count: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, ToSchema)]

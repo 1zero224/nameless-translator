@@ -1,7 +1,19 @@
 'use client'
 
-import { Languages, LoaderCircleIcon, Trash2Icon } from 'lucide-react'
+import {
+  BandageIcon,
+  CheckCircle2Icon,
+  CircleDashedIcon,
+  ImagePlusIcon,
+  Languages,
+  LoaderCircleIcon,
+  SparklesIcon,
+  Trash2Icon,
+  TriangleAlertIcon,
+  TypeIcon,
+} from 'lucide-react'
 import { motion } from 'motion/react'
+import type React from 'react'
 import { useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -24,14 +36,28 @@ import {
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useCurrentPage, useTextNodes, type TextNodeEntry } from '@/hooks/useCurrentPage'
 import { getConfig, startPipeline, useGetCurrentLlm } from '@/lib/api/default/default'
-import { fetchApi } from '@/lib/api/fetch'
 import type { TextDataPatch } from '@/lib/api/schemas'
-import { applyOp, invalidateScene, queueAutoRender, reorderPageTextNodes } from '@/lib/io/scene'
+import { openImageLayerFile } from '@/lib/io/openFiles'
+import {
+  applyOp,
+  queueAutoRender,
+  reorderPageTextNodes,
+  uploadRepairImageLayer,
+} from '@/lib/io/scene'
 import { ops } from '@/lib/ops'
 import { useEditorUiStore } from '@/lib/stores/editorUiStore'
 import { useJobsStore } from '@/lib/stores/jobsStore'
 import { usePreferencesStore } from '@/lib/stores/preferencesStore'
 import { useSelectionStore } from '@/lib/stores/selectionStore'
+import {
+  canChooseResult,
+  normalizeWorkflow,
+  setResultMode,
+  toggleMode,
+  type TextResultMode,
+  type TextWorkflow,
+  type WorkflowStatus,
+} from '@/lib/workflow'
 
 export function TextBlocksPanel() {
   const { t } = useTranslation()
@@ -70,7 +96,16 @@ export function TextBlocksPanel() {
   const patchText = async (nodeId: string, patch: TextDataPatch) => {
     await applyOp(
       ops.updateNode(page.id, nodeId, {
-        data: { text: patch } as never,
+        data: { text: patch },
+      }),
+    )
+    queueAutoRender(page.id)
+  }
+
+  const patchWorkflow = async (nodeId: string, workflow: TextWorkflow) => {
+    await applyOp(
+      ops.updateNode(page.id, nodeId, {
+        data: { text: { workflow } },
       }),
     )
     queueAutoRender(page.id)
@@ -102,6 +137,12 @@ export function TextBlocksPanel() {
       defaultFont: prefs.defaultFont,
       readingOrder: editor.readingOrder === 'custom' ? undefined : editor.readingOrder,
     })
+  }
+
+  const bindRepairLayer = async (nodeId: string) => {
+    const file = await openImageLayerFile()
+    if (!file) return
+    await uploadRepairImageLayer(page.id, nodeId, file)
   }
 
   return (
@@ -189,8 +230,10 @@ export function TextBlocksPanel() {
                   selected={selectedIds.has(node.id)}
                   onToggleSelect={() => select(node.id, true)}
                   onPatch={(patch) => void patchText(node.id, patch)}
+                  onWorkflow={(workflow) => void patchWorkflow(node.id, workflow)}
                   onDelete={() => void removeNode(node.id)}
                   onGenerate={() => void generate(node.id)}
+                  onBindRepairLayer={() => void bindRepairLayer(node.id)}
                   processing={isProcessing}
                   llmReady={llmReady}
                 />
@@ -209,8 +252,10 @@ type BlockCardProps = {
   selected: boolean
   onToggleSelect: () => void
   onPatch: (patch: TextDataPatch) => void
+  onWorkflow: (workflow: TextWorkflow) => void
   onDelete: () => void
   onGenerate: () => void
+  onBindRepairLayer: () => void
   processing: boolean
   llmReady: boolean
 }
@@ -221,13 +266,16 @@ function BlockCard({
   selected,
   onToggleSelect,
   onPatch,
+  onWorkflow,
   onDelete,
   onGenerate,
+  onBindRepairLayer,
   processing,
   llmReady,
 }: BlockCardProps) {
   const { t } = useTranslation()
   const data = node.data
+  const workflow = normalizeWorkflow(data)
   const hasOcr = !!data.text?.trim()
   const hasTranslation = !!data.translation?.trim()
   const preview = data.translation?.trim() || data.text?.trim()
@@ -284,6 +332,28 @@ function BlockCard({
         </AccordionTrigger>
         <AccordionContent className='px-2 pt-1.5 pb-2 shadow-[inset_0_1px_0_0_var(--color-border)]'>
           <div className='space-y-1.5'>
+            <WorkflowControls workflow={workflow} onWorkflow={onWorkflow} />
+            {workflow.modes?.includes('repair') && (
+              <div className='flex justify-end'>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      aria-label={workflow.repairLayer ? '替换修图图层' : '绑定修图图层'}
+                      variant='ghost'
+                      size='icon-xs'
+                      disabled={processing}
+                      onClick={onBindRepairLayer}
+                      className='size-5'
+                    >
+                      <ImagePlusIcon className='size-3' />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent side='left' sideOffset={4}>
+                    {workflow.repairLayer ? '替换修图图层' : '绑定修图图层'}
+                  </TooltipContent>
+                </Tooltip>
+              </div>
+            )}
             <div className='flex flex-col gap-0.5'>
               <span className='text-[10px] text-muted-foreground uppercase'>
                 {t('textBlocks.ocrLabel')}
@@ -354,9 +424,157 @@ function BlockCard({
                 className='min-h-0 resize-none px-1.5 py-1 text-xs'
               />
             </div>
+            <WorkflowTrace workflow={workflow} />
           </div>
         </AccordionContent>
       </AccordionItem>
     </motion.div>
+  )
+}
+
+function WorkflowControls({
+  workflow,
+  onWorkflow,
+}: {
+  workflow: TextWorkflow
+  onWorkflow: (workflow: TextWorkflow) => void
+}) {
+  const modes = workflow.modes ?? []
+  return (
+    <div className='rounded-md border border-border/70 bg-muted/30 p-1.5'>
+      <div className='mb-1.5 flex items-center justify-between gap-2'>
+        <span className='text-[10px] font-medium text-muted-foreground uppercase'>Workflow</span>
+        <div className='flex items-center gap-1'>
+          <StatusPill status={workflow.letteringStatus ?? 'pending'} label='嵌字' />
+          <StatusPill status={workflow.repairStatus ?? 'pending'} label='修图' />
+        </div>
+      </div>
+      <div className='grid grid-cols-2 gap-1'>
+        <ModeButton
+          active={modes.includes('lettering')}
+          icon={TypeIcon}
+          label='嵌字模式'
+          onClick={() => onWorkflow(toggleMode(workflow, 'lettering'))}
+        />
+        <ModeButton
+          active={modes.includes('repair')}
+          icon={BandageIcon}
+          label='修图模式'
+          onClick={() => onWorkflow(toggleMode(workflow, 'repair'))}
+        />
+      </div>
+      {canChooseResult(workflow) && (
+        <div className='mt-1.5 grid grid-cols-2 gap-1 rounded-md bg-background/70 p-1'>
+          <ResultButton
+            active={workflow.resultMode === 'lettering'}
+            mode='lettering'
+            label='导出嵌字'
+            onClick={(mode) => onWorkflow(setResultMode(workflow, mode))}
+          />
+          <ResultButton
+            active={workflow.resultMode === 'repair'}
+            mode='repair'
+            label='导出修图'
+            onClick={(mode) => onWorkflow(setResultMode(workflow, mode))}
+          />
+        </div>
+      )}
+    </div>
+  )
+}
+
+function ModeButton({
+  active,
+  icon: Icon,
+  label,
+  onClick,
+}: {
+  active: boolean
+  icon: React.ComponentType<{ className?: string }>
+  label: string
+  onClick: () => void
+}) {
+  return (
+    <button
+      type='button'
+      data-active={active ? 'true' : 'false'}
+      onClick={onClick}
+      className='flex h-7 cursor-pointer items-center justify-center gap-1 rounded-md border border-border bg-background px-2 text-[11px] font-medium text-muted-foreground transition-colors data-[active=true]:border-primary/50 data-[active=true]:bg-primary/10 data-[active=true]:text-primary hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none'
+    >
+      <Icon className='size-3.5' />
+      <span>{label}</span>
+    </button>
+  )
+}
+
+function ResultButton({
+  active,
+  mode,
+  label,
+  onClick,
+}: {
+  active: boolean
+  mode: TextResultMode
+  label: string
+  onClick: (mode: TextResultMode) => void
+}) {
+  return (
+    <button
+      type='button'
+      data-active={active ? 'true' : 'false'}
+      onClick={() => onClick(mode)}
+      className='h-6 cursor-pointer rounded px-2 text-[10px] font-semibold text-muted-foreground uppercase transition-colors data-[active=true]:bg-primary data-[active=true]:text-primary-foreground hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none'
+    >
+      {label}
+    </button>
+  )
+}
+
+function StatusPill({ status, label }: { status: WorkflowStatus; label: string }) {
+  const Icon =
+    status === 'running'
+      ? LoaderCircleIcon
+      : status === 'succeeded'
+        ? CheckCircle2Icon
+        : status === 'failed'
+          ? TriangleAlertIcon
+          : CircleDashedIcon
+  return (
+    <span
+      data-status={status}
+      className='inline-flex items-center gap-0.5 rounded-full border border-border bg-background px-1.5 py-0.5 text-[9px] text-muted-foreground data-[status=failed]:border-destructive/40 data-[status=failed]:text-destructive data-[status=succeeded]:border-emerald-500/40 data-[status=succeeded]:text-emerald-600'
+    >
+      <Icon className={`size-2.5 ${status === 'running' ? 'animate-spin' : ''}`} />
+      {label}
+    </span>
+  )
+}
+
+function WorkflowTrace({ workflow }: { workflow: TextWorkflow }) {
+  const selectedFont = workflow.fontTrace?.selectedFont
+  const repairModel = workflow.repairTrace?.model
+  const repairError = workflow.repairTrace?.error
+  if (!selectedFont && !repairModel && !repairError) return null
+  return (
+    <div className='space-y-1 rounded-md border border-border/60 bg-background/70 p-1.5 text-[10px] text-muted-foreground'>
+      {selectedFont && (
+        <div className='flex items-center gap-1'>
+          <SparklesIcon className='size-3 text-primary' />
+          <span className='truncate'>字体: {selectedFont}</span>
+        </div>
+      )}
+      {repairModel && (
+        <div className='flex items-center gap-1'>
+          <BandageIcon className='size-3 text-primary' />
+          <span className='truncate'>修图: {repairModel}</span>
+        </div>
+      )}
+      {repairError && (
+        <div className='flex items-center gap-1 text-destructive'>
+          <TriangleAlertIcon className='size-3' />
+          <span className='truncate'>{repairError}</span>
+        </div>
+      )}
+    </div>
   )
 }

@@ -274,7 +274,7 @@ pub enum MaskRole {
 // Text node
 // ---------------------------------------------------------------------------
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, ToSchema)]
+#[derive(Clone, Debug, Default, Serialize, JsonSchema, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct TextData {
     #[serde(default)]
@@ -309,6 +309,246 @@ pub struct TextData {
     pub sprite_transform: Option<Transform>,
     #[serde(default)]
     pub lock_layout_box: bool,
+    #[serde(default)]
+    pub workflow: TextWorkflow,
+}
+
+impl<'de> Deserialize<'de> for TextData {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        const FIELDS: &[&str] = &[
+            "confidence",
+            "sourceLang",
+            "sourceDirection",
+            "renderedDirection",
+            "linePolygons",
+            "rotationDeg",
+            "detectedFontSizePx",
+            "detector",
+            "text",
+            "translation",
+            "style",
+            "fontPrediction",
+            "sprite",
+            "spriteTransform",
+            "lockLayoutBox",
+            "workflow",
+        ];
+
+        if deserializer.is_human_readable() {
+            return TextDataRepr::deserialize(deserializer).map(Into::into);
+        }
+        deserializer.deserialize_struct("TextData", FIELDS, TextDataVisitor)
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TextDataRepr {
+    #[serde(default)]
+    confidence: f32,
+    #[serde(default)]
+    source_lang: Option<String>,
+    #[serde(default)]
+    source_direction: Option<TextDirection>,
+    #[serde(default)]
+    rendered_direction: Option<TextDirection>,
+    #[serde(default)]
+    line_polygons: Option<Vec<[[f32; 2]; 4]>>,
+    #[serde(default)]
+    rotation_deg: Option<f32>,
+    #[serde(default)]
+    detected_font_size_px: Option<f32>,
+    #[serde(default)]
+    detector: Option<String>,
+    #[serde(default)]
+    text: Option<String>,
+    #[serde(default)]
+    translation: Option<String>,
+    #[serde(default)]
+    style: Option<TextStyle>,
+    #[serde(default)]
+    font_prediction: Option<FontPrediction>,
+    #[serde(default)]
+    sprite: Option<BlobRef>,
+    #[serde(default)]
+    sprite_transform: Option<Transform>,
+    #[serde(default)]
+    lock_layout_box: bool,
+    #[serde(default)]
+    workflow: TextWorkflow,
+}
+
+impl From<TextDataRepr> for TextData {
+    fn from(value: TextDataRepr) -> Self {
+        Self {
+            confidence: value.confidence,
+            source_lang: value.source_lang,
+            source_direction: value.source_direction,
+            rendered_direction: value.rendered_direction,
+            line_polygons: value.line_polygons,
+            rotation_deg: value.rotation_deg,
+            detected_font_size_px: value.detected_font_size_px,
+            detector: value.detector,
+            text: value.text,
+            translation: value.translation,
+            style: value.style,
+            font_prediction: value.font_prediction,
+            sprite: value.sprite,
+            sprite_transform: value.sprite_transform,
+            lock_layout_box: value.lock_layout_box,
+            workflow: value.workflow,
+        }
+    }
+}
+
+struct TextDataVisitor;
+
+impl<'de> serde::de::Visitor<'de> for TextDataVisitor {
+    type Value = TextData;
+
+    fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("TextData")
+    }
+
+    fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+    where
+        A: serde::de::SeqAccess<'de>,
+    {
+        Ok(TextData {
+            confidence: seq.next_element()?.unwrap_or_default(),
+            source_lang: seq.next_element()?.unwrap_or_default(),
+            source_direction: seq.next_element()?.unwrap_or_default(),
+            rendered_direction: seq.next_element()?.unwrap_or_default(),
+            line_polygons: seq.next_element()?.unwrap_or_default(),
+            rotation_deg: seq.next_element()?.unwrap_or_default(),
+            detected_font_size_px: seq.next_element()?.unwrap_or_default(),
+            detector: seq.next_element()?.unwrap_or_default(),
+            text: seq.next_element()?.unwrap_or_default(),
+            translation: seq.next_element()?.unwrap_or_default(),
+            style: seq.next_element()?.unwrap_or_default(),
+            font_prediction: seq.next_element()?.unwrap_or_default(),
+            sprite: seq.next_element()?.unwrap_or_default(),
+            sprite_transform: seq.next_element()?.unwrap_or_default(),
+            lock_layout_box: seq.next_element()?.unwrap_or_default(),
+            workflow: seq.next_element()?.unwrap_or_default(),
+        })
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct TextWorkflow {
+    #[serde(default = "default_text_workflow_modes")]
+    pub modes: Vec<TextWorkflowMode>,
+    #[serde(default)]
+    pub result_mode: TextResultMode,
+    #[serde(default)]
+    pub lettering_status: WorkflowStatus,
+    #[serde(default)]
+    pub repair_status: WorkflowStatus,
+    #[serde(default)]
+    pub repair_layer: Option<NodeId>,
+    #[serde(default)]
+    pub font_trace: Option<FontWorkflowTrace>,
+    #[serde(default)]
+    pub repair_trace: Option<RepairWorkflowTrace>,
+    #[serde(default)]
+    pub selection: Option<TextSelection>,
+}
+
+impl Default for TextWorkflow {
+    fn default() -> Self {
+        Self {
+            modes: default_text_workflow_modes(),
+            result_mode: TextResultMode::default(),
+            lettering_status: WorkflowStatus::default(),
+            repair_status: WorkflowStatus::default(),
+            repair_layer: None,
+            font_trace: None,
+            repair_trace: None,
+            selection: None,
+        }
+    }
+}
+
+fn default_text_workflow_modes() -> Vec<TextWorkflowMode> {
+    vec![TextWorkflowMode::Lettering]
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum TextWorkflowMode {
+    Lettering,
+    Repair,
+}
+
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema, ToSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum TextResultMode {
+    #[default]
+    Lettering,
+    Repair,
+}
+
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema, ToSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkflowStatus {
+    #[default]
+    Pending,
+    Running,
+    Succeeded,
+    Failed,
+    Skipped,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct FontWorkflowTrace {
+    #[serde(default)]
+    pub primary_category: Option<String>,
+    #[serde(default)]
+    pub secondary_category: Option<String>,
+    #[serde(default)]
+    pub candidate_fonts: Vec<String>,
+    #[serde(default)]
+    pub selected_font: Option<String>,
+    #[serde(default)]
+    pub notes: Vec<String>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct RepairWorkflowTrace {
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub prompt: Option<String>,
+    #[serde(default)]
+    pub source_mask: Option<BlobRef>,
+    #[serde(default)]
+    pub error: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct TextSelection {
+    #[serde(default)]
+    pub shapes: Vec<TextSelectionShape>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, ToSchema)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum TextSelectionShape {
+    Rectangle { transform: Transform },
+    Brush { mask: BlobRef },
+    Polygon { points: Vec<[f32; 2]> },
 }
 
 // ---------------------------------------------------------------------------
@@ -410,5 +650,57 @@ mod tests {
         assert_eq!(decoded.pages.len(), 1);
         assert_eq!(decoded.project.name, "hello");
         assert!(decoded.pages.contains_key(&page_id));
+    }
+
+    #[test]
+    fn text_workflow_defaults_to_lettering_mode() {
+        let text = TextData::default();
+        assert_eq!(text.workflow.modes, vec![TextWorkflowMode::Lettering]);
+        assert_eq!(text.workflow.result_mode, TextResultMode::Lettering);
+        assert_eq!(text.workflow.lettering_status, WorkflowStatus::Pending);
+        assert_eq!(text.workflow.repair_status, WorkflowStatus::Pending);
+    }
+
+    #[test]
+    fn text_workflow_postcard_round_trips() {
+        let mut scene = Scene::default();
+        let mut page = Page::new("p1", 800, 600);
+        let node = Node {
+            id: NodeId::new(),
+            transform: Transform {
+                x: 10.0,
+                y: 20.0,
+                width: 100.0,
+                height: 50.0,
+                rotation_deg: 12.0,
+            },
+            visible: true,
+            kind: NodeKind::Text(TextData {
+                workflow: TextWorkflow {
+                    modes: vec![TextWorkflowMode::Lettering, TextWorkflowMode::Repair],
+                    result_mode: TextResultMode::Repair,
+                    repair_status: WorkflowStatus::Succeeded,
+                    ..Default::default()
+                },
+                ..Default::default()
+            }),
+        };
+        let node_id = node.id;
+        page.nodes.insert(node_id, node);
+        let page_id = page.id;
+        scene.pages.insert(page_id, page);
+
+        let bytes = postcard::to_allocvec(&scene).expect("serialize");
+        let decoded: Scene = postcard::from_bytes(&bytes).expect("deserialize");
+        let text = match &decoded.pages[&page_id].nodes[&node_id].kind {
+            NodeKind::Text(text) => text,
+            _ => panic!("expected text node"),
+        };
+        assert_eq!(
+            text.workflow.modes,
+            vec![TextWorkflowMode::Lettering, TextWorkflowMode::Repair]
+        );
+        assert_eq!(text.workflow.result_mode, TextResultMode::Repair);
+        assert_eq!(text.workflow.repair_status, WorkflowStatus::Succeeded);
     }
 }

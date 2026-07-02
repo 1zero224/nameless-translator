@@ -9,13 +9,14 @@
 //! clients never collide on the same name.
 
 use std::fs;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::UNIX_EPOCH;
 
 use anyhow::{Context, Result};
 use camino::{Utf8Path, Utf8PathBuf};
-use koharu_core::ProjectSummary;
+use koharu_core::{BlobRef, ImageRole, NodeKind, ProjectSummary, Scene};
 
 use crate::AppConfig;
+use crate::scene_snapshot::Snapshot;
 
 pub const PROJECT_EXT: &str = "khrproj";
 
@@ -107,15 +108,88 @@ pub fn list_projects(config: &AppConfig) -> Result<Vec<ProjectSummary>> {
             .and_then(|m| m.duration_since(UNIX_EPOCH).ok())
             .map(|d| d.as_millis() as u64)
             .unwrap_or(0);
+        let scene_summary = read_scene_summary(&abs).unwrap_or_default();
         out.push(ProjectSummary {
             id: id.to_string(),
             name: display,
             path: abs.to_string(),
             updated_at_ms,
+            cover_url: scene_summary.cover.as_ref().map(|_| project_cover_url(id)),
+            page_count: scene_summary.page_count,
+            text_block_count: scene_summary.text_block_count,
         });
     }
     out.sort_by_key(|project| std::cmp::Reverse(project.updated_at_ms));
     Ok(out)
+}
+
+/// API path for a managed project's bookshelf cover.
+pub fn project_cover_url(id: &str) -> String {
+    format!("/api/v1/projects/{id}/cover")
+}
+
+/// Read the first source-image blob bytes from a saved project without
+/// opening it as the active session.
+pub fn read_project_cover(config: &AppConfig, id: &str) -> Result<Option<Vec<u8>>> {
+    let dir = project_path(config, id)?;
+    read_project_cover_at(&dir)
+}
+
+pub fn read_project_cover_at(dir: &Utf8Path) -> Result<Option<Vec<u8>>> {
+    if !dir.exists() {
+        return Ok(None);
+    }
+    let Some(cover) = read_scene_summary(&dir).and_then(|summary| summary.cover) else {
+        return Ok(None);
+    };
+    let path = blob_path(&dir, &cover);
+    let bytes = std::fs::read(path.as_std_path())
+        .with_context(|| format!("read cover blob {}", cover.hash()))?;
+    Ok(Some(bytes))
+}
+
+fn blob_path(project_dir: &Utf8Path, blob: &BlobRef) -> Utf8PathBuf {
+    let hash = blob.hash();
+    let split = 2.min(hash.len());
+    let (prefix, rest) = hash.split_at(split);
+    project_dir.join("blobs").join(prefix).join(rest)
+}
+
+#[derive(Clone, Debug, Default)]
+struct StoredSceneSummary {
+    cover: Option<koharu_core::BlobRef>,
+    page_count: usize,
+    text_block_count: usize,
+}
+
+fn read_scene_summary(dir: &Utf8Path) -> Option<StoredSceneSummary> {
+    let bytes = fs::read(dir.join("scene.bin").as_std_path()).ok()?;
+    let snap: Snapshot = crate::scene_snapshot::decode(&bytes).ok()?;
+    Some(scene_summary(&snap.scene))
+}
+
+fn scene_summary(scene: &Scene) -> StoredSceneSummary {
+    let cover = scene.pages.values().find_map(|page| {
+        page.nodes.values().find_map(|node| match &node.kind {
+            NodeKind::Image(img) if img.role == ImageRole::Source => Some(img.blob.clone()),
+            _ => None,
+        })
+    });
+    let text_block_count = scene
+        .pages
+        .values()
+        .map(|page| {
+            page.nodes
+                .values()
+                .filter(|node| matches!(node.kind, NodeKind::Text(_)))
+                .count()
+        })
+        .sum();
+    StoredSceneSummary {
+        cover,
+        page_count: scene.pages.len(),
+        text_block_count,
+    }
 }
 
 /// Produce an id for a `.khrproj/` directory basename.
@@ -173,7 +247,6 @@ fn slugify(input: &str) -> String {
         }
         // Other chars dropped silently.
     }
-    let _ = SystemTime::now().duration_since(UNIX_EPOCH); // silence unused import warn
     while out.ends_with('-') {
         out.pop();
     }
@@ -183,6 +256,9 @@ fn slugify(input: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use koharu_core::{
+        BlobRef, ImageData, ImageRole, Node, NodeId, NodeKind, Page, ProjectMeta, Transform,
+    };
 
     #[test]
     fn slugify_basic() {
@@ -191,5 +267,51 @@ mod tests {
         assert_eq!(slugify("under_score_already"), "under-score-already");
         assert_eq!(slugify("你好 hello"), "hello");
         assert_eq!(slugify("--dashes--"), "dashes");
+    }
+
+    #[test]
+    fn read_project_cover_reads_saved_project_blob_store() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = Utf8PathBuf::from_path_buf(tmp.path().to_path_buf()).unwrap();
+        let project_dir = root.join("sample.khrproj");
+        std::fs::create_dir_all(project_dir.join("blobs").as_std_path()).unwrap();
+
+        let bytes = b"cover-bytes";
+        let hash = blake3::hash(bytes).to_hex().to_string();
+        let blob = BlobRef::new(hash.clone());
+        let blob_path = blob_path(&project_dir, &blob);
+        std::fs::create_dir_all(blob_path.parent().unwrap().as_std_path()).unwrap();
+        std::fs::write(blob_path.as_std_path(), bytes).unwrap();
+
+        let mut scene = Scene::default();
+        scene.project = ProjectMeta {
+            name: "Sample".into(),
+            ..ProjectMeta::default()
+        };
+        let mut page = Page::new("p1", 100, 100);
+        let node_id = NodeId::new();
+        page.nodes.insert(
+            node_id,
+            Node {
+                id: node_id,
+                transform: Transform::default(),
+                visible: true,
+                kind: NodeKind::Image(ImageData {
+                    role: ImageRole::Source,
+                    blob,
+                    opacity: 1.0,
+                    natural_width: 100,
+                    natural_height: 100,
+                    name: Some("cover.png".into()),
+                }),
+            },
+        );
+        scene.pages.insert(page.id, page);
+        let snap = Snapshot { epoch: 0, scene };
+        let encoded = crate::scene_snapshot::encode(&snap).unwrap();
+        std::fs::write(project_dir.join("scene.bin").as_std_path(), encoded).unwrap();
+
+        let cover = read_project_cover_at(&project_dir).unwrap().unwrap();
+        assert_eq!(cover, bytes);
     }
 }

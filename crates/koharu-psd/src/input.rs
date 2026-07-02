@@ -79,11 +79,25 @@ pub struct PsdTextBlock {
     pub font_index: Option<usize>,
 }
 
+#[derive(Debug, Clone)]
+pub struct PsdImageLayer {
+    pub id: String,
+    pub name: String,
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub height: f32,
+    pub visible: bool,
+    pub opacity: f32,
+    pub image: PsdBlobRef,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct PsdDocument {
     pub width: u32,
     pub height: u32,
     pub text_blocks: Vec<PsdTextBlock>,
+    pub image_layers: Vec<PsdImageLayer>,
     /// Global list of PostScript font names used in this document.
     pub fonts: Vec<String>,
 }
@@ -96,6 +110,8 @@ pub struct ResolvedDocument<'a> {
     pub inpainted: Option<&'a DynamicImage>,
     pub rendered: Option<&'a DynamicImage>,
     pub brush_layer: Option<&'a DynamicImage>,
+    /// Resolved free raster image layers, keyed by `PsdImageLayer.image`.
+    pub image_layer_images: &'a HashMap<PsdBlobRef, DynamicImage>,
     /// Resolved pre-rendered text-block images, keyed by `PsdTextBlock.rendered`.
     pub block_images: &'a HashMap<PsdBlobRef, DynamicImage>,
 }

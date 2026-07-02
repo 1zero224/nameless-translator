@@ -69,6 +69,48 @@ describe('WelcomeScreen', () => {
     expect(names).toEqual(['Newer', 'Older'])
   })
 
+  it('can sort projects by name', async () => {
+    server.use(
+      http.get('/api/v1/projects', () =>
+        HttpResponse.json({
+          projects: [
+            { id: 'b', name: 'Beta', path: '/tmp/b', updatedAtMs: 200 },
+            { id: 'a', name: 'Alpha', path: '/tmp/a', updatedAtMs: 100 },
+          ],
+        }),
+      ),
+    )
+    renderWithQuery(<WelcomeScreen />)
+
+    await waitFor(() => expect(screen.queryByText('Alpha')).toBeInTheDocument())
+    await userEvent.click(screen.getByRole('button', { name: '项目名称' }))
+
+    const names = screen.getAllByText(/^(Alpha|Beta)$/).map((el) => el.textContent)
+    expect(names).toEqual(['Alpha', 'Beta'])
+  })
+
+  it('uses project-scoped cover urls on bookshelf cards', async () => {
+    server.use(
+      http.get('/api/v1/projects', () =>
+        HttpResponse.json({
+          projects: [
+            {
+              id: 'covered',
+              name: 'Covered',
+              path: '/tmp/covered',
+              updatedAtMs: 100,
+              coverUrl: '/api/v1/projects/covered/cover',
+            },
+          ],
+        }),
+      ),
+    )
+    renderWithQuery(<WelcomeScreen />)
+
+    const cover = (await screen.findByAltText('Covered')) as HTMLImageElement
+    expect(cover.getAttribute('src')).toBe('/api/v1/projects/covered/cover')
+  })
+
   it('New project dialog: submit disabled until name typed', async () => {
     withProjects([])
     renderWithQuery(<WelcomeScreen />)

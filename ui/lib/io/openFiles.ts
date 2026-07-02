@@ -55,6 +55,34 @@ export async function openImageFiles(): Promise<ImagePickerResult> {
   }
 }
 
+/** Pick one image file and return it as a `File` on both web and Tauri. */
+export async function openImageLayerFile(): Promise<File | null> {
+  if (isTauri()) {
+    const { open } = await import('@tauri-apps/plugin-dialog')
+    const picked = await open({
+      multiple: false,
+      filters: [{ name: 'Images', extensions: [...IMAGE_EXTENSIONS] }],
+    })
+    if (!picked || typeof picked !== 'string') return null
+    const [file] = await readTauriFiles([picked])
+    return file ?? null
+  }
+
+  const { fileOpen } = await import('browser-fs-access')
+  try {
+    const result = await fileOpen({
+      multiple: false,
+      mimeTypes: IMAGE_MIME,
+      extensions: IMAGE_EXTENSIONS.map((e) => `.${e}`),
+      description: 'Images',
+    })
+    return Array.isArray(result) ? (result[0] ?? null) : result
+  } catch (e) {
+    if (isAbort(e)) return null
+    throw e
+  }
+}
+
 /** Pick a folder; return every image file inside it (non-recursive). */
 export async function openImageFolder(): Promise<ImagePickerResult> {
   if (isTauri()) {

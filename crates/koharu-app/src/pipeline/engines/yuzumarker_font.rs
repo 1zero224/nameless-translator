@@ -9,14 +9,16 @@ use koharu_ml::font_detector::FontDetector;
 
 use crate::pipeline::artifacts::Artifact;
 use crate::pipeline::engine::{Engine, EngineCtx, EngineInfo};
-use crate::pipeline::engines::support::{load_source_image, text_nodes};
+use crate::pipeline::engines::support::{
+    lettering_text_nodes, load_source_image, workflow_with_font_trace,
+};
 
 pub struct Model(FontDetector);
 
 #[async_trait]
 impl Engine for Model {
     async fn run(&self, ctx: EngineCtx<'_>) -> Result<Vec<Op>> {
-        let texts = text_nodes(ctx.scene, ctx.page);
+        let texts = lettering_text_nodes(ctx.scene, ctx.page);
         if texts.is_empty() {
             return Ok(Vec::new());
         }
@@ -39,15 +41,18 @@ impl Engine for Model {
         }
 
         let mut ops = Vec::with_capacity(texts.len());
-        for ((node_id, _, _), pred) in texts.iter().zip(preds) {
+        for ((node_id, _, text), pred) in texts.iter().zip(preds) {
+            let pred = ml_prediction_to_core(pred);
+            let workflow = workflow_with_font_trace(text, &pred);
             ops.push(Op::UpdateNode {
                 page: ctx.page,
                 id: *node_id,
                 patch: NodePatch {
                     data: Some(NodeDataPatch::Text(TextDataPatch {
-                        font_prediction: Some(Some(ml_prediction_to_core(pred))),
+                        font_prediction: Some(Some(pred)),
                         // Clear any previous style so the renderer re-derives.
                         style: Some(None),
+                        workflow: Some(workflow),
                         ..Default::default()
                     })),
                     transform: None,

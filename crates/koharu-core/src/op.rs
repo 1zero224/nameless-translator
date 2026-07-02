@@ -26,7 +26,7 @@ use crate::blob::BlobRef;
 use crate::font::{FontPrediction, TextDirection};
 use crate::scene::{
     ImageData, ImageRole, MaskData, MaskRole, Node, NodeId, NodeKind, NodeKindTag, Page, PageId,
-    ProjectStyle, Scene, TextData, Transform,
+    ProjectStyle, Scene, TextData, TextResultMode, TextWorkflow, TextWorkflowMode, Transform,
 };
 use crate::style::TextStyle;
 
@@ -219,6 +219,8 @@ pub struct TextDataPatch {
     pub sprite_transform: Option<Option<Transform>>,
     #[serde(default)]
     pub lock_layout_box: Option<bool>,
+    #[serde(default)]
+    pub workflow: Option<TextWorkflow>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, ToSchema)]
@@ -696,6 +698,7 @@ fn capture_prev_text(kind: &NodeKind, p: &TextDataPatch) -> TextDataPatch {
         sprite: p.sprite.as_ref().map(|_| data.sprite.clone()),
         sprite_transform: p.sprite_transform.as_ref().map(|_| data.sprite_transform),
         lock_layout_box: p.lock_layout_box.as_ref().map(|_| data.lock_layout_box),
+        workflow: p.workflow.as_ref().map(|_| data.workflow.clone()),
     }
 }
 
@@ -786,6 +789,21 @@ fn apply_text_patch(t: &mut TextData, p: &TextDataPatch) {
     if let Some(v) = p.lock_layout_box {
         t.lock_layout_box = v;
     }
+    if let Some(v) = &p.workflow {
+        t.workflow = normalize_workflow(v.clone());
+    }
+}
+
+fn normalize_workflow(mut workflow: TextWorkflow) -> TextWorkflow {
+    if workflow.modes.is_empty() {
+        workflow.modes.push(TextWorkflowMode::Lettering);
+    }
+    if workflow.result_mode == TextResultMode::Repair
+        && !workflow.modes.contains(&TextWorkflowMode::Repair)
+    {
+        workflow.result_mode = TextResultMode::Lettering;
+    }
+    workflow
 }
 
 fn apply_image_patch(i: &mut ImageData, p: &ImageDataPatch) {
@@ -976,5 +994,60 @@ mod tests {
         let mut undo = op.inverse();
         undo.apply(&mut scene).unwrap();
         assert_eq!(scene.pages.keys().copied().collect::<Vec<_>>(), ids);
+    }
+
+    #[test]
+    fn update_text_workflow_normalizes_empty_modes() {
+        let mut scene = seed_scene();
+        let page = blank_page();
+        let page_id = page.id;
+        Op::AddPage { page, at: 0 }.apply(&mut scene).unwrap();
+
+        let node = Node {
+            id: NodeId::new(),
+            transform: Transform::default(),
+            visible: true,
+            kind: NodeKind::Text(TextData::default()),
+        };
+        let node_id = node.id;
+        Op::AddNode {
+            page: page_id,
+            node,
+            at: 0,
+        }
+        .apply(&mut scene)
+        .unwrap();
+
+        let mut op = Op::UpdateNode {
+            page: page_id,
+            id: node_id,
+            patch: NodePatch {
+                data: Some(NodeDataPatch::Text(TextDataPatch {
+                    workflow: Some(TextWorkflow {
+                        modes: Vec::new(),
+                        result_mode: TextResultMode::Repair,
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                })),
+                ..Default::default()
+            },
+            prev: NodePatch::default(),
+        };
+        op.apply(&mut scene).unwrap();
+
+        let NodeKind::Text(text) = &scene.node(page_id, node_id).unwrap().kind else {
+            panic!("expected text node");
+        };
+        assert_eq!(text.workflow.modes, vec![TextWorkflowMode::Lettering]);
+        assert_eq!(text.workflow.result_mode, TextResultMode::Lettering);
+
+        let mut undo = op.inverse();
+        undo.apply(&mut scene).unwrap();
+        let NodeKind::Text(text) = &scene.node(page_id, node_id).unwrap().kind else {
+            panic!("expected text node");
+        };
+        assert_eq!(text.workflow.modes, vec![TextWorkflowMode::Lettering]);
+        assert_eq!(text.workflow.result_mode, TextResultMode::Lettering);
     }
 }

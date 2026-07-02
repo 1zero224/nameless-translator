@@ -1,6 +1,9 @@
 use std::io::Write;
 
-use image::{DynamicImage, GrayImage, Rgba, RgbaImage, imageops::overlay};
+use image::{
+    DynamicImage, GrayImage, Rgba, RgbaImage,
+    imageops::{FilterType, overlay, resize},
+};
 
 use crate::{
     descriptor::{
@@ -9,8 +12,8 @@ use crate::{
     engine_data::{TextEngineSpec, TextJustification, TextOrientation, encode_engine_data},
     error::PsdExportError,
     input::{
-        PsdBlobRef, PsdDocument, PsdFontPrediction, PsdTextAlign, PsdTextBlock, PsdTextDirection,
-        ResolvedDocument,
+        PsdBlobRef, PsdDocument, PsdFontPrediction, PsdImageLayer, PsdTextAlign, PsdTextBlock,
+        PsdTextDirection, ResolvedDocument,
     },
     packbits::{ChannelId, encode_image_rle},
     writer::PsdWriter,
@@ -197,6 +200,12 @@ fn collect_layers(
         });
     }
 
+    for image_layer in &document.image_layers {
+        if let Some(layer) = raster_image_layer(image_layer, resolved.image_layer_images)? {
+            layers.push(layer);
+        }
+    }
+
     let mut text_index = 1i32;
     let mut text_layers = Vec::new();
     for block in &document.text_blocks {
@@ -219,6 +228,33 @@ fn collect_layers(
     }
 
     Ok(layers)
+}
+
+fn raster_image_layer(
+    layer: &PsdImageLayer,
+    layer_images: &std::collections::HashMap<PsdBlobRef, DynamicImage>,
+) -> Result<Option<ExportLayer>, PsdExportError> {
+    let Some(image) = layer_images.get(&layer.image) else {
+        return Ok(None);
+    };
+    let mut pixels = dynamic_to_rgba(image);
+    let target_width = layer.width.ceil().max(1.0) as u32;
+    let target_height = layer.height.ceil().max(1.0) as u32;
+    if pixels.width() != target_width || pixels.height() != target_height {
+        pixels = resize(&pixels, target_width, target_height, FilterType::Lanczos3);
+    }
+    apply_opacity(&mut pixels, layer.opacity);
+    validate_layer_pixels(&layer.name, &pixels)?;
+
+    Ok(Some(ExportLayer {
+        id: 0,
+        name: format!("IMG {} {}", layer.id, layer.name),
+        left: layer.x.trunc() as i32,
+        top: layer.y.trunc() as i32,
+        pixels,
+        hidden: !layer.visible,
+        text: None,
+    }))
 }
 
 fn text_layer(
@@ -337,6 +373,16 @@ fn validate_layer_pixels(layer: &str, pixels: &RgbaImage) -> Result<(), PsdExpor
 
 fn dynamic_to_rgba(image: &DynamicImage) -> RgbaImage {
     image.to_rgba8()
+}
+
+fn apply_opacity(pixels: &mut RgbaImage, opacity: f32) {
+    let opacity = opacity.clamp(0.0, 1.0);
+    if (opacity - 1.0).abs() < f32::EPSILON {
+        return;
+    }
+    for pixel in pixels.pixels_mut() {
+        pixel.0[3] = ((pixel.0[3] as f32) * opacity).round().clamp(0.0, 255.0) as u8;
+    }
 }
 
 fn grayscale_mask_rgba(image: &DynamicImage) -> RgbaImage {
@@ -745,11 +791,13 @@ mod tests {
 
     use crate::writer::PsdWriter;
 
-    use crate::input::{PsdDocument, PsdTextBlock, PsdTextDirection, ResolvedDocument};
+    use crate::input::{
+        PsdBlobRef, PsdDocument, PsdImageLayer, PsdTextBlock, PsdTextDirection, ResolvedDocument,
+    };
 
     use super::{
-        PsdExportOptions, TextLayerMode, TextOrientation, contains_cjk, export_document,
-        infer_orientation, is_probably_latin, place_on_canvas, write_image_data,
+        PsdExportOptions, TextLayerMode, TextOrientation, apply_opacity, contains_cjk,
+        export_document, infer_orientation, is_probably_latin, place_on_canvas, write_image_data,
     };
 
     #[test]
@@ -837,6 +885,7 @@ mod tests {
                 font_index: Some(1),
                 ..Default::default()
             }],
+            image_layers: vec![],
             fonts: vec!["AdobeInvisFont".to_string(), "ArialMT".to_string()],
         };
         let block_images = HashMap::new();
@@ -847,6 +896,7 @@ mod tests {
             inpainted: None,
             rendered: None,
             brush_layer: None,
+            image_layer_images: &block_images,
             block_images: &block_images,
         };
 
@@ -888,6 +938,7 @@ mod tests {
                 font_index: Some(0),
                 ..Default::default()
             }],
+            image_layers: vec![],
             fonts: vec!["ArialMT".to_string()],
         };
         let block_images = HashMap::new();
@@ -898,6 +949,7 @@ mod tests {
             inpainted: None,
             rendered: None,
             brush_layer: None,
+            image_layer_images: &block_images,
             block_images: &block_images,
         };
 
@@ -927,6 +979,7 @@ mod tests {
             width: 16,
             height: 16,
             text_blocks: vec![],
+            image_layers: vec![],
             fonts: vec![],
         };
         let block_images = HashMap::new();
@@ -937,6 +990,7 @@ mod tests {
             inpainted: None,
             rendered: None,
             brush_layer: None,
+            image_layer_images: &block_images,
             block_images: &block_images,
         };
 
@@ -946,5 +1000,60 @@ mod tests {
         // The count is written as i16.
         // "Original Image" exists. Count should be -1.
         assert!(bytes.windows(2).any(|w| w == (-1i16).to_be_bytes()));
+    }
+
+    #[test]
+    fn export_writes_custom_image_layers() {
+        let source =
+            DynamicImage::ImageRgba8(RgbaImage::from_pixel(16, 16, Rgba([255, 255, 255, 255])));
+        let custom_ref = PsdBlobRef::new("repair-layer");
+        let document = PsdDocument {
+            width: 16,
+            height: 16,
+            image_layers: vec![PsdImageLayer {
+                id: "node-1".to_string(),
+                name: "Repair result".to_string(),
+                x: 4.0,
+                y: 5.0,
+                width: 8.0,
+                height: 7.0,
+                visible: true,
+                opacity: 1.0,
+                image: custom_ref.clone(),
+            }],
+            fonts: vec![],
+            ..Default::default()
+        };
+        let mut image_layers = HashMap::new();
+        image_layers.insert(
+            custom_ref,
+            DynamicImage::ImageRgba8(RgbaImage::from_pixel(2, 2, Rgba([1, 2, 3, 255]))),
+        );
+        let block_images = HashMap::new();
+        let resolved = ResolvedDocument {
+            document: &document,
+            source: &source,
+            segment: None,
+            inpainted: None,
+            rendered: None,
+            brush_layer: None,
+            image_layer_images: &image_layers,
+            block_images: &block_images,
+        };
+
+        let bytes = export_document(&resolved, &PsdExportOptions::default()).expect("export");
+
+        assert!(
+            bytes.windows(13).any(|w| w == b"Repair result"),
+            "custom PSD raster layer name should be present in the layer records",
+        );
+    }
+
+    #[test]
+    fn opacity_multiplies_layer_alpha() {
+        let mut image = RgbaImage::from_pixel(1, 1, Rgba([1, 2, 3, 200]));
+        apply_opacity(&mut image, 0.5);
+
+        assert_eq!(image.get_pixel(0, 0).0[3], 100);
     }
 }

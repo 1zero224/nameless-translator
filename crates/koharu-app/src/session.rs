@@ -28,6 +28,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::blobs::BlobStore;
 use crate::history::{self, History};
+use crate::scene_snapshot::{self, Snapshot};
 
 const SCENE_FILE: &str = "scene.bin";
 const LOG_FILE: &str = "history.log";
@@ -35,13 +36,6 @@ const LOCK_FILE: &str = ".lock";
 const BLOBS_DIR: &str = "blobs";
 const CACHE_DIR: &str = "cache";
 const PROJECT_TOML: &str = "project.toml";
-
-/// Snapshot written to `scene.bin`.
-#[derive(Serialize, Deserialize)]
-struct Snapshot {
-    epoch: u64,
-    scene: Scene,
-}
 
 /// A loaded project.
 pub struct ProjectSession {
@@ -164,7 +158,7 @@ impl ProjectSession {
                 scene: scene.clone(),
             }
         };
-        let bytes = postcard::to_allocvec(&snap).context("encode snapshot")?;
+        let bytes = scene_snapshot::encode(&snap)?;
         AtomicFile::new(
             self.dir.join(SCENE_FILE).as_std_path(),
             OverwriteBehavior::AllowOverwrite,
@@ -186,8 +180,8 @@ fn load_snapshot(dir: &Utf8Path, creating: bool) -> Result<(Scene, u64)> {
     if scene_path.exists() {
         let bytes = std::fs::read(scene_path.as_std_path())
             .with_context(|| format!("read {}", scene_path))?;
-        let snap: Snapshot =
-            postcard::from_bytes(&bytes).with_context(|| format!("decode {}", scene_path))?;
+        let snap =
+            scene_snapshot::decode(&bytes).with_context(|| format!("decode {}", scene_path))?;
         return Ok((snap.scene, snap.epoch));
     }
 
@@ -227,9 +221,16 @@ struct ProjectTomlFile {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::BTreeMap;
+
+    use crate::scene_snapshot::{
+        LegacyNodeKindV1, LegacyNodeV1, LegacyPageV1, LegacySceneV1, LegacySnapshotV1,
+        LegacyTextDataV1,
+    };
     use camino::Utf8PathBuf;
     use koharu_core::{
-        Node, NodeId, NodeKind, Op, Page, PageId, TextData, TextShaderEffect, TextStyle, Transform,
+        Node, NodeId, NodeKind, Op, Page, PageId, ProjectMeta, TextData, TextShaderEffect,
+        TextStyle, Transform,
     };
     use tempfile::tempdir;
 
@@ -320,6 +321,73 @@ mod tests {
             .expect("effect");
         assert!(effect.italic);
         assert!(effect.bold);
+    }
+
+    #[test]
+    fn open_legacy_scene_bin_without_text_workflow_defaults_workflow() {
+        let (_tmp, path) = tmp_dir();
+        std::fs::create_dir_all(path.as_std_path()).unwrap();
+        let page_id = PageId::new();
+        let text_id = NodeId::new();
+        let mut nodes = BTreeMap::new();
+        nodes.insert(
+            text_id,
+            LegacyNodeV1 {
+                id: text_id,
+                transform: Transform {
+                    x: 10.0,
+                    y: 12.0,
+                    width: 120.0,
+                    height: 40.0,
+                    rotation_deg: 0.0,
+                },
+                visible: true,
+                kind: LegacyNodeKindV1::Text(LegacyTextDataV1 {
+                    text: Some("原文".into()),
+                    translation: Some("translation".into()),
+                    ..Default::default()
+                }),
+            },
+        );
+        let mut pages = BTreeMap::new();
+        pages.insert(
+            page_id,
+            LegacyPageV1 {
+                id: page_id,
+                name: "legacy page".into(),
+                width: 800,
+                height: 600,
+                nodes,
+            },
+        );
+        let snap = LegacySnapshotV1 {
+            epoch: 7,
+            scene: LegacySceneV1 {
+                project: ProjectMeta {
+                    name: "legacy".into(),
+                    ..ProjectMeta::default()
+                },
+                pages,
+            },
+        };
+        std::fs::write(
+            path.join(SCENE_FILE).as_std_path(),
+            postcard::to_allocvec(&snap).unwrap(),
+        )
+        .unwrap();
+
+        let session = ProjectSession::open(&path).unwrap();
+        assert_eq!(session.epoch(), 7);
+        let scene = session.scene.read();
+        let page = scene.pages.get(&page_id).expect("page");
+        let node = page.nodes.get(&text_id).expect("node");
+        let NodeKind::Text(text) = &node.kind else {
+            panic!("expected text node");
+        };
+        assert_eq!(
+            text.workflow.modes,
+            vec![koharu_core::TextWorkflowMode::Lettering]
+        );
     }
 
     #[test]

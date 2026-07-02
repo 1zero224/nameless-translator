@@ -1,6 +1,7 @@
 'use client'
 
 import {
+  BotIcon,
   LanguagesIcon,
   LoaderCircleIcon,
   ScanIcon,
@@ -37,6 +38,7 @@ import { useEditorUiStore } from '@/lib/stores/editorUiStore'
 import { useJobsStore } from '@/lib/stores/jobsStore'
 import { usePreferencesStore } from '@/lib/stores/preferencesStore'
 import { useSelectionStore } from '@/lib/stores/selectionStore'
+import { useScene } from '@/hooks/useScene'
 
 // ---------------------------------------------------------------------------
 // Helpers (inlined from former llmTargets util)
@@ -96,8 +98,10 @@ function WorkflowButtons() {
   const { t } = useTranslation()
   const { data: llmState } = useGetCurrentLlm()
   const llmReady = llmState?.status === 'ready'
+  const { scene } = useScene()
   const pageId = useSelectionStore((s) => s.pageId)
   const hasPage = pageId !== null
+  const hasProject = scene !== null
   const isProcessing = useIsProcessing()
   const currentStep = useCurrentStep()
 
@@ -146,6 +150,7 @@ function WorkflowButtons() {
   const translateChain: PipelinePick = (p) => [p.translator!]
   const inpaintChain: PipelinePick = (p) => [p.inpainter!]
   const renderChain: PipelinePick = (p) => [p.renderer!]
+  const automationChain: PipelinePick = (p) => [p.font_detector!, p.inpainter!, p.renderer!]
 
   const isDetecting = currentStep === 'detect'
   const isOcr = currentStep === 'ocr'
@@ -155,6 +160,21 @@ function WorkflowButtons() {
 
   return (
     <div className='flex items-center gap-0.5'>
+      <Button
+        variant='default'
+        size='xs'
+        onClick={() => void runStepForProject(automationChain)}
+        data-testid='toolbar-automation'
+        disabled={!hasProject || isProcessing}
+      >
+        {isProcessing ? (
+          <LoaderCircleIcon className='size-4 animate-spin' />
+        ) : (
+          <BotIcon className='size-4' />
+        )}
+        启动自动化工作流
+      </Button>
+      <Separator orientation='vertical' className='mx-0.5 h-4' />
       <Button
         variant='ghost'
         size='xs'
@@ -231,6 +251,22 @@ function WorkflowButtons() {
       </Button>
     </div>
   )
+
+  async function runStepForProject(pick: PipelinePick) {
+    const cfg = await getConfig()
+    if (!cfg.pipeline) return
+    const steps = pick(cfg.pipeline).filter((s): s is string => !!s)
+    if (steps.length === 0) return
+    const editor = useEditorUiStore.getState()
+    const prefs = usePreferencesStore.getState()
+    await startPipeline({
+      steps,
+      targetLanguage: editor.selectedLanguage,
+      systemPrompt: prefs.customSystemPrompt,
+      defaultFont: prefs.defaultFont,
+      readingOrder: editor.readingOrder === 'custom' ? undefined : editor.readingOrder,
+    })
+  }
 }
 
 function LlmStatusPopover() {

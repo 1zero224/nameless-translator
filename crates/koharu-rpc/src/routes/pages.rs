@@ -17,8 +17,8 @@ use axum::extract::{Multipart, Path, Query, State};
 use image::GenericImageView;
 use koharu_app::pipeline::{self, EngineCtx, PipelineRunOptions};
 use koharu_core::{
-    BlobRef, ImageData, ImageRole, MaskRole, Node, NodeDataPatch, NodeId, NodeKind, Op, Page,
-    PageId, ReadingOrder, Region, Scene, Transform,
+    BlobRef, ImageData, ImageRole, MaskRole, Node, NodeDataPatch, NodeId, NodeKind, NodePatch, Op,
+    Page, PageId, ReadingOrder, Region, Scene, TextDataPatch, Transform,
 };
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -339,16 +339,28 @@ pub struct AddImageLayerResponse {
     pub node: NodeId,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::IntoParams)]
+#[serde(rename_all = "camelCase")]
+pub struct AddImageLayerParams {
+    /// Optional text node to bind this custom image layer as its repair
+    /// result. Omit for a normal free image layer.
+    pub repair_text: Option<NodeId>,
+}
+
 #[utoipa::path(
     post,
     path = "/pages/{id}/image-layers",
-    params(("id" = PageId, Path, description = "Page id")),
+    params(
+        ("id" = PageId, Path, description = "Page id"),
+        AddImageLayerParams
+    ),
     request_body(content_type = "multipart/form-data"),
     responses((status = 200, body = AddImageLayerResponse))
 )]
 async fn add_image_layer(
     State(app): State<AppState>,
     Path(page_id): Path<PageId>,
+    Query(params): Query<AddImageLayerParams>,
     mut multipart: Multipart,
 ) -> ApiResult<Json<AddImageLayerResponse>> {
     let session = app
@@ -410,14 +422,78 @@ async fn add_image_layer(
             name: Some(filename),
         }),
     };
-    app.apply(Op::AddNode {
+    let add_node = Op::AddNode {
         page: page_id,
         node,
         at: page_node_count,
-    })
-    .map_err(ApiError::internal)?;
+    };
+    let op = if let Some(text_id) = params.repair_text {
+        bind_repair_layer_op(&session.scene.read(), page_id, text_id, node_id, add_node)?
+    } else {
+        add_node
+    };
+    app.apply(op).map_err(ApiError::internal)?;
 
     Ok(Json(AddImageLayerResponse { node: node_id }))
+}
+
+fn ensure_repair_text_node(scene: &Scene, page_id: PageId, text_id: NodeId) -> ApiResult<()> {
+    let page = scene
+        .page(page_id)
+        .ok_or_else(|| ApiError::not_found(format!("page {page_id}")))?;
+    match page.nodes.get(&text_id).map(|node| &node.kind) {
+        Some(NodeKind::Text(_)) => Ok(()),
+        Some(_) => Err(ApiError::bad_request(format!("node {text_id} is not text"))),
+        None => Err(ApiError::not_found(format!("node {text_id}"))),
+    }
+}
+
+fn bind_repair_layer_op(
+    scene: &Scene,
+    page_id: PageId,
+    text_id: NodeId,
+    layer_id: NodeId,
+    add_node: Op,
+) -> ApiResult<Op> {
+    ensure_repair_text_node(scene, page_id, text_id)?;
+    let mut workflow = current_text_workflow(scene, page_id, text_id)?;
+    workflow.repair_layer = Some(layer_id);
+    Ok(Op::Batch {
+        ops: vec![
+            add_node,
+            Op::UpdateNode {
+                page: page_id,
+                id: text_id,
+                patch: NodePatch {
+                    data: Some(NodeDataPatch::Text(TextDataPatch {
+                        workflow: Some(workflow),
+                        ..Default::default()
+                    })),
+                    ..Default::default()
+                },
+                prev: NodePatch::default(),
+            },
+        ],
+        label: "Add repair image layer".into(),
+    })
+}
+
+fn current_text_workflow(
+    scene: &Scene,
+    page_id: PageId,
+    text_id: NodeId,
+) -> ApiResult<koharu_core::TextWorkflow> {
+    let page = scene
+        .page(page_id)
+        .ok_or_else(|| ApiError::not_found(format!("page {page_id}")))?;
+    let node = page
+        .nodes
+        .get(&text_id)
+        .ok_or_else(|| ApiError::not_found(format!("node {text_id}")))?;
+    let NodeKind::Text(text) = &node.kind else {
+        return Err(ApiError::bad_request(format!("node {text_id} is not text")));
+    };
+    Ok(text.workflow.clone())
 }
 
 fn center_on_page(page: Option<&koharu_core::Page>, iw: u32, ih: u32) -> (f32, f32) {
@@ -529,6 +605,7 @@ async fn put_mask(
     };
 
     if let Some(engine_id) = params.pipeline.as_ref() {
+        let engine_id = pipeline::resolve_inpainter_alias(engine_id).into_owned();
         // Atomic Batch: Mask Update + Pipeline Run
         let mut ops = vec![mask_op.clone()];
 
@@ -562,7 +639,7 @@ async fn put_mask(
         };
 
         // 3. Run Engine (Synchronously for this request)
-        let engine_info = pipeline::Registry::find(engine_id)
+        let engine_info = pipeline::Registry::find(&engine_id)
             .map_err(|e| ApiError::bad_request(format!("{e:#}")))?;
         let engine = app
             .registry
@@ -691,4 +768,76 @@ async fn reorder_text_nodes(
     }
 
     Ok(axum::http::StatusCode::OK)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use koharu_core::{TextData, TextWorkflowMode};
+
+    #[test]
+    fn bind_repair_layer_op_sets_text_workflow_repair_layer() {
+        let page_id = PageId::new();
+        let text_id = NodeId::new();
+        let layer_id = NodeId::new();
+        let mut scene = Scene::default();
+        let mut page = Page::new("p1", 320, 240);
+        page.id = page_id;
+        page.nodes.insert(
+            text_id,
+            Node {
+                id: text_id,
+                transform: Transform {
+                    x: 10.0,
+                    y: 20.0,
+                    width: 80.0,
+                    height: 30.0,
+                    rotation_deg: 0.0,
+                },
+                visible: true,
+                kind: NodeKind::Text(TextData {
+                    workflow: koharu_core::TextWorkflow {
+                        modes: vec![TextWorkflowMode::Repair],
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                }),
+            },
+        );
+        let add_node = Op::AddNode {
+            page: page_id,
+            node: Node {
+                id: layer_id,
+                transform: Transform::default(),
+                visible: true,
+                kind: NodeKind::Image(ImageData {
+                    role: ImageRole::Custom,
+                    blob: BlobRef::new("repair"),
+                    opacity: 1.0,
+                    natural_width: 1,
+                    natural_height: 1,
+                    name: Some("repair.png".into()),
+                }),
+            },
+            at: 1,
+        };
+        scene.pages.insert(page_id, page);
+
+        let mut op =
+            bind_repair_layer_op(&scene, page_id, text_id, layer_id, add_node).expect("bind op");
+        op.apply(&mut scene).expect("apply bind op");
+
+        let page = scene.page(page_id).expect("page");
+        let NodeKind::Text(text) = &page.nodes.get(&text_id).expect("text").kind else {
+            panic!("expected text");
+        };
+        assert_eq!(text.workflow.repair_layer, Some(layer_id));
+        assert!(matches!(
+            page.nodes.get(&layer_id).expect("layer").kind,
+            NodeKind::Image(ImageData {
+                role: ImageRole::Custom,
+                ..
+            })
+        ));
+    }
 }
