@@ -505,7 +505,7 @@ pub fn text_region_to_pair(
     r: koharu_ml::types::TextRegion,
     default_detector: &'static str,
 ) -> ([f32; 4], TextData) {
-    let bbox = [r.x, r.y, r.x + r.width, r.y + r.height];
+    let bbox = text_region_outer_bbox(&r);
     let data = TextData {
         confidence: r.confidence,
         source_direction: r.source_direction.map(ml_text_direction_to_core),
@@ -516,6 +516,39 @@ pub fn text_region_to_pair(
         ..Default::default()
     };
     (bbox, data)
+}
+
+fn text_region_outer_bbox(r: &koharu_ml::types::TextRegion) -> [f32; 4] {
+    let detector_bbox = [r.x, r.y, r.x + r.width, r.y + r.height];
+    let Some(polygons) = r
+        .line_polygons
+        .as_ref()
+        .filter(|polygons| !polygons.is_empty())
+    else {
+        return detector_bbox;
+    };
+
+    let mut min_x = f32::INFINITY;
+    let mut min_y = f32::INFINITY;
+    let mut max_x = f32::NEG_INFINITY;
+    let mut max_y = f32::NEG_INFINITY;
+
+    for point in polygons.iter().flat_map(|polygon| polygon.iter()) {
+        let [x, y] = *point;
+        if !x.is_finite() || !y.is_finite() {
+            continue;
+        }
+        min_x = min_x.min(x);
+        min_y = min_y.min(y);
+        max_x = max_x.max(x);
+        max_y = max_y.max(y);
+    }
+
+    if min_x.is_finite() && min_y.is_finite() && max_x.is_finite() && max_y.is_finite() {
+        [min_x, min_y, max_x, max_y]
+    } else {
+        detector_bbox
+    }
 }
 
 /// Current node count on `page`, or 0 if the page doesn't exist.
@@ -713,6 +746,7 @@ mod tests {
         BlobRef, ImageRole, NodeDataPatch, NodeId, NodeKind, ReadingOrder, TextWorkflow,
         TextWorkflowMode,
     };
+    use koharu_ml::types::TextRegion;
 
     #[test]
     fn test_reading_order_sort() {
@@ -733,6 +767,27 @@ mod tests {
         sort_manga_reading_order(&mut blocks, ReadingOrder::Ltr);
         assert_eq!(blocks[0].1, "left");
         assert_eq!(blocks[1].1, "right");
+    }
+
+    #[test]
+    fn text_region_to_pair_uses_line_polygon_outer_bbox_when_detector_bbox_is_smaller() {
+        let region = TextRegion {
+            x: 20.0,
+            y: 20.0,
+            width: 30.0,
+            height: 30.0,
+            confidence: 0.9,
+            line_polygons: Some(vec![
+                [[5.0, 8.0], [45.0, 8.0], [45.0, 24.0], [5.0, 24.0]],
+                [[70.0, 40.0], [110.0, 40.0], [110.0, 72.0], [70.0, 72.0]],
+            ]),
+            ..Default::default()
+        };
+
+        let (bbox, text) = text_region_to_pair(region, "ctd");
+
+        assert_eq!(bbox, [5.0, 8.0, 110.0, 72.0]);
+        assert_eq!(text.line_polygons.as_ref().expect("line polygons").len(), 2);
     }
 
     #[test]
