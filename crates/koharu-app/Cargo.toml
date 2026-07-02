@@ -42,6 +42,7 @@ parking_lot = { workspace = true }
 petgraph = { workspace = true }
 postcard = { workspace = true }
 reqwest-middleware = { workspace = true }
+reqwest = { workspace = true }
 secrecy = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

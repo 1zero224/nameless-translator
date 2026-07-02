@@ -23,6 +23,11 @@ pub fn resolve_inpainter_alias(id: &str) -> Cow<'_, str> {
         | "lama-mpe" | "bt-lama-mpe" => Cow::Borrowed("lama-manga"),
         "aot" | "bt-aot" | "aot-inpainting" => Cow::Borrowed("aot-inpainting"),
         "flux2-klein" | "flux-2-klein" | "bt-flux2-klein" => Cow::Borrowed("flux2-klein"),
+        "gpt-image-2"
+        | "gpt-image2"
+        | "gpt-image2-masked-edit"
+        | "gpt-image-2-masked-edit"
+        | "gpt-image-repair" => Cow::Borrowed("gpt-image-2-repair"),
         _ => Cow::Borrowed(trimmed),
     }
 }
@@ -48,9 +53,14 @@ mod tests {
     fn leaves_unsupported_external_engines_unresolved() {
         assert_eq!(resolve_inpainter_alias("opencv_tela"), "opencv_tela");
         assert_eq!(resolve_inpainter_alias("patchmatch"), "patchmatch");
+    }
+
+    #[test]
+    fn maps_gpt_image_repair_aliases() {
         assert_eq!(
             resolve_inpainter_alias("gpt_image2_masked_edit"),
-            "gpt_image2_masked_edit"
+            "gpt-image-2-repair"
         );
+        assert_eq!(resolve_inpainter_alias("gpt-image-2"), "gpt-image-2-repair");
     }
 }

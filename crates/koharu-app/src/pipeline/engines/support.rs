@@ -4,7 +4,7 @@
 //! `TextRegion`s, `DynamicImage`s) into `Op` sequences that mutate the scene.
 
 use anyhow::{Context, Result};
-use image::{DynamicImage, GenericImageView};
+use image::{DynamicImage, GenericImageView, Rgba, RgbaImage, imageops::FilterType};
 use koharu_core::{
     BlobRef, FontPrediction, FontWorkflowTrace, ImageData, ImageRole, MaskData, MaskRole, Node,
     NodeDataPatch, NodeId, NodeKind, Op, PageId, ReadingOrder, Region, RepairWorkflowTrace, Scene,
@@ -166,6 +166,143 @@ pub fn mark_repair_succeeded_ops(
             update_text_workflow_op(page, node_id, workflow_with_repair_success(text, model))
         })
         .collect()
+}
+
+/// Build an OpenAI image-edit mask for a text transform. Per the Images Edit
+/// API, transparent pixels are editable and opaque pixels are preserved.
+pub fn openai_edit_mask_for_transform(
+    source_width: u32,
+    source_height: u32,
+    transform: &Transform,
+) -> RgbaImage {
+    let mut mask = RgbaImage::from_pixel(source_width, source_height, Rgba([0, 0, 0, 255]));
+    for y in 0..source_height {
+        for x in 0..source_width {
+            if transform_contains_pixel(transform, x as f32 + 0.5, y as f32 + 0.5) {
+                mask.put_pixel(x, y, Rgba([0, 0, 0, 0]));
+            }
+        }
+    }
+    mask
+}
+
+fn transform_contains_pixel(transform: &Transform, px: f32, py: f32) -> bool {
+    let cx = transform.x + transform.width / 2.0;
+    let cy = transform.y + transform.height / 2.0;
+    let theta = -transform.rotation_deg.to_radians();
+    let dx = px - cx;
+    let dy = py - cy;
+    let local_x = dx * theta.cos() - dy * theta.sin() + transform.width / 2.0;
+    let local_y = dx * theta.sin() + dy * theta.cos() + transform.height / 2.0;
+    local_x >= 0.0 && local_x < transform.width && local_y >= 0.0 && local_y < transform.height
+}
+
+/// Convert a full-page edit result into a transparent repair layer by keeping
+/// only pixels that were editable in the OpenAI mask.
+pub fn repair_layer_image_from_edit_output(
+    edited: &DynamicImage,
+    mask: &DynamicImage,
+) -> Result<RgbaImage> {
+    let mask = mask.to_rgba8();
+    let (width, height) = mask.dimensions();
+    let edited = if edited.dimensions() == (width, height) {
+        edited.to_rgba8()
+    } else {
+        edited
+            .resize_exact(width, height, FilterType::Lanczos3)
+            .to_rgba8()
+    };
+    let mut layer = RgbaImage::new(width, height);
+    for y in 0..height {
+        for x in 0..width {
+            let mut pixel = *edited.get_pixel(x, y);
+            pixel.0[3] = 255_u8.saturating_sub(mask.get_pixel(x, y).0[3]);
+            layer.put_pixel(x, y, pixel);
+        }
+    }
+    Ok(layer)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn build_bound_repair_layer_ops(
+    scene: &Scene,
+    page: PageId,
+    text_id: NodeId,
+    layer_blob: BlobRef,
+    mask_blob: BlobRef,
+    natural_width: u32,
+    natural_height: u32,
+    model: &str,
+    prompt: &str,
+) -> Result<Vec<Op>> {
+    let page_ref = scene
+        .page(page)
+        .with_context(|| format!("page {} not found", page))?;
+    let node = page_ref
+        .nodes
+        .get(&text_id)
+        .with_context(|| format!("node {} not found", text_id))?;
+    let NodeKind::Text(text) = &node.kind else {
+        anyhow::bail!("node {} is not text", text_id);
+    };
+    let layer_id = NodeId::new();
+    let workflow = workflow_with_bound_repair_layer(text, layer_id, mask_blob, model, prompt);
+    let node = bound_repair_layer_node(layer_id, layer_blob, natural_width, natural_height, model);
+    Ok(vec![
+        Op::AddNode {
+            page,
+            node,
+            at: page_ref.nodes.len(),
+        },
+        update_text_workflow_op(page, text_id, workflow),
+    ])
+}
+
+fn workflow_with_bound_repair_layer(
+    text: &TextData,
+    layer_id: NodeId,
+    mask_blob: BlobRef,
+    model: &str,
+    prompt: &str,
+) -> TextWorkflow {
+    let mut workflow = text.workflow.clone();
+    workflow.repair_layer = Some(layer_id);
+    workflow.repair_status = WorkflowStatus::Succeeded;
+    workflow.repair_trace = Some(RepairWorkflowTrace {
+        model: Some(model.to_string()),
+        prompt: Some(prompt.to_string()),
+        source_mask: Some(mask_blob),
+        error: None,
+    });
+    workflow
+}
+
+fn bound_repair_layer_node(
+    id: NodeId,
+    blob: BlobRef,
+    natural_width: u32,
+    natural_height: u32,
+    model: &str,
+) -> Node {
+    Node {
+        id,
+        transform: Transform {
+            x: 0.0,
+            y: 0.0,
+            width: natural_width as f32,
+            height: natural_height as f32,
+            rotation_deg: 0.0,
+        },
+        visible: true,
+        kind: NodeKind::Image(ImageData {
+            role: ImageRole::Custom,
+            blob,
+            opacity: 1.0,
+            natural_width,
+            natural_height,
+            name: Some(format!("{model} repair")),
+        }),
+    }
 }
 
 fn transform_intersects_region(transform: &Transform, region: &Region) -> bool {
@@ -571,7 +708,11 @@ pub fn sort_manga_reading_order<T>(blocks: &mut [([f32; 4], T)], order: ReadingO
 #[cfg(test)]
 mod tests {
     use super::*;
-    use koharu_core::{NodeId, ReadingOrder, TextWorkflowMode};
+    use image::{Rgba, RgbaImage};
+    use koharu_core::{
+        BlobRef, ImageRole, NodeDataPatch, NodeId, NodeKind, ReadingOrder, TextWorkflow,
+        TextWorkflowMode,
+    };
 
     #[test]
     fn test_reading_order_sort() {
@@ -642,6 +783,148 @@ mod tests {
         assert_eq!(ops.len(), 1);
         match &ops[0] {
             Op::UpdateNode { id, .. } => assert_eq!(*id, near_id),
+            other => panic!("expected UpdateNode, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn openai_edit_mask_for_transform_marks_text_region_transparent_and_rest_opaque() {
+        let mask = openai_edit_mask_for_transform(
+            20,
+            20,
+            &Transform {
+                x: 5.0,
+                y: 6.0,
+                width: 4.0,
+                height: 3.0,
+                rotation_deg: 0.0,
+            },
+        );
+
+        assert_eq!(mask.dimensions(), (20, 20));
+        assert_eq!(mask.get_pixel(6, 7).0[3], 0);
+        assert_eq!(mask.get_pixel(0, 0).0[3], 255);
+    }
+
+    #[test]
+    fn repair_layer_image_keeps_only_editable_mask_pixels() {
+        let mut edited = RgbaImage::new(2, 1);
+        edited.put_pixel(0, 0, Rgba([10, 20, 30, 255]));
+        edited.put_pixel(1, 0, Rgba([200, 210, 220, 255]));
+        let mut mask = RgbaImage::new(2, 1);
+        mask.put_pixel(0, 0, Rgba([0, 0, 0, 0]));
+        mask.put_pixel(1, 0, Rgba([0, 0, 0, 255]));
+
+        let layer = repair_layer_image_from_edit_output(
+            &DynamicImage::ImageRgba8(edited),
+            &DynamicImage::ImageRgba8(mask),
+        )
+        .expect("extract repair layer");
+
+        assert_eq!(layer.get_pixel(0, 0).0, [10, 20, 30, 255]);
+        assert_eq!(layer.get_pixel(1, 0).0, [200, 210, 220, 0]);
+    }
+
+    #[test]
+    fn repair_layer_image_resizes_edit_output_to_mask_dimensions() {
+        let edited = RgbaImage::from_pixel(4, 2, Rgba([100, 110, 120, 255]));
+        let mut mask = RgbaImage::new(2, 1);
+        mask.put_pixel(0, 0, Rgba([0, 0, 0, 0]));
+        mask.put_pixel(1, 0, Rgba([0, 0, 0, 255]));
+
+        let layer = repair_layer_image_from_edit_output(
+            &DynamicImage::ImageRgba8(edited),
+            &DynamicImage::ImageRgba8(mask),
+        )
+        .expect("extract repair layer");
+
+        assert_eq!(layer.dimensions(), (2, 1));
+        assert_eq!(layer.get_pixel(0, 0).0[3], 255);
+        assert_eq!(layer.get_pixel(1, 0).0[3], 0);
+    }
+
+    #[test]
+    fn build_bound_repair_layer_ops_adds_custom_layer_and_binds_workflow() {
+        let page_id = PageId::new();
+        let text_id = NodeId::new();
+        let layer_blob = BlobRef::new("layer");
+        let mask_blob = BlobRef::new("mask");
+        let mut scene = Scene::default();
+        let mut page = koharu_core::Page::new("p1", 100, 120);
+        page.id = page_id;
+        page.nodes.insert(
+            text_id,
+            Node {
+                id: text_id,
+                transform: Transform {
+                    x: 20.0,
+                    y: 30.0,
+                    width: 40.0,
+                    height: 50.0,
+                    rotation_deg: 12.0,
+                },
+                visible: true,
+                kind: NodeKind::Text(TextData {
+                    text: Some("原文".to_string()),
+                    translation: Some("translation".to_string()),
+                    workflow: TextWorkflow {
+                        modes: vec![TextWorkflowMode::Repair],
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                }),
+            },
+        );
+        scene.pages.insert(page_id, page);
+
+        let ops = build_bound_repair_layer_ops(
+            &scene,
+            page_id,
+            text_id,
+            layer_blob.clone(),
+            mask_blob.clone(),
+            100,
+            120,
+            "gpt-image-2",
+            "replace with translation",
+        )
+        .expect("build repair ops");
+
+        assert_eq!(ops.len(), 2);
+        let layer_id = match &ops[0] {
+            Op::AddNode { node, at, .. } => {
+                assert_eq!(*at, 1);
+                assert_eq!(node.transform.x, 0.0);
+                assert_eq!(node.transform.y, 0.0);
+                assert_eq!(node.transform.width, 100.0);
+                assert_eq!(node.transform.height, 120.0);
+                let NodeKind::Image(image) = &node.kind else {
+                    panic!("expected custom image layer");
+                };
+                assert_eq!(image.role, ImageRole::Custom);
+                assert_eq!(image.blob, layer_blob);
+                assert_eq!(image.natural_width, 100);
+                assert_eq!(image.natural_height, 120);
+                assert_eq!(image.name.as_deref(), Some("gpt-image-2 repair"));
+                node.id
+            }
+            other => panic!("expected AddNode, got {other:?}"),
+        };
+
+        match &ops[1] {
+            Op::UpdateNode { id, patch, .. } => {
+                assert_eq!(*id, text_id);
+                let Some(NodeDataPatch::Text(text_patch)) = &patch.data else {
+                    panic!("expected text workflow patch");
+                };
+                let workflow = text_patch.workflow.as_ref().expect("workflow patch");
+                assert_eq!(workflow.repair_layer, Some(layer_id));
+                assert_eq!(workflow.repair_status, WorkflowStatus::Succeeded);
+                let trace = workflow.repair_trace.as_ref().expect("repair trace");
+                assert_eq!(trace.model.as_deref(), Some("gpt-image-2"));
+                assert_eq!(trace.prompt.as_deref(), Some("replace with translation"));
+                assert_eq!(trace.source_mask.as_ref(), Some(&mask_blob));
+            }
             other => panic!("expected UpdateNode, got {other:?}"),
         }
     }
