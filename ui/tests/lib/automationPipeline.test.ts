@@ -10,7 +10,10 @@ const pipeline = {
   renderer: 'koharu-renderer',
 } as PipelineConfig
 
-function sceneWithTextModes(modes: string[]): Scene {
+function sceneWithTextModes(
+  modes: string[],
+  translations?: Array<string | null | undefined>,
+): Scene {
   return {
     project: { name: 'P' } as never,
     pages: {
@@ -29,7 +32,8 @@ function sceneWithTextModes(modes: string[]): Scene {
               kind: {
                 text: {
                   text: '原文',
-                  translation: 'translation',
+                  translation:
+                    translations && index in translations ? translations[index] : 'translation',
                   workflow: {
                     modes: mode.split('+'),
                     resultMode: mode.includes('repair') ? 'repair' : 'lettering',
@@ -84,9 +88,23 @@ describe('buildAutomationSteps', () => {
       letteringBlocks: 2,
       repairBlocks: 2,
       dualModeBlocks: 1,
+      missingTranslationBlocks: 0,
     })
     expect(plan.steps).toEqual(['font-detector', 'lama-manga'])
     expect(plan.missingEngines).toEqual(['repairer', 'renderer'])
+    expect(plan.canRun).toBe(false)
+  })
+
+  it('blocks project automation when selected workflow blocks have no translation', () => {
+    const plan = buildAutomationPlan(
+      pipeline,
+      sceneWithTextModes(['lettering', 'repair', 'lettering+repair'], ['译文', '   ', undefined]),
+    )
+
+    expect(plan.counts).toMatchObject({
+      textBlocks: 3,
+      missingTranslationBlocks: 2,
+    })
     expect(plan.canRun).toBe(false)
   })
 })

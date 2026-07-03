@@ -285,19 +285,21 @@ function WorkflowButtons() {
 
 function AutomationPlanPopover({ plan }: { plan: AutomationPlan }) {
   const missing = plan.missingEngines.length > 0
+  const missingTranslations = plan.counts.missingTranslationBlocks > 0
+  const blocked = missing || missingTranslations
   const empty = plan.counts.textBlocks === 0
   return (
     <Popover>
       <PopoverTrigger asChild>
         <Button
           type='button'
-          variant={missing ? 'outline' : 'ghost'}
+          variant={blocked ? 'outline' : 'ghost'}
           size='xs'
           data-testid='toolbar-automation-plan'
-          className={missing ? 'border-amber-300 text-amber-700 dark:text-amber-300' : undefined}
+          className={blocked ? 'border-amber-300 text-amber-700 dark:text-amber-300' : undefined}
           title='自动化计划'
         >
-          {missing ? (
+          {blocked ? (
             <TriangleAlertIcon className='size-3.5' />
           ) : (
             <ListChecksIcon className='size-3.5' />
@@ -323,9 +325,18 @@ function AutomationPlanPopover({ plan }: { plan: AutomationPlan }) {
             <PlanStat label={`修图 ${plan.counts.repairBlocks}`} />
             <PlanStat label={`双模式 ${plan.counts.dualModeBlocks}`} />
           </div>
-          {missing ? (
-            <div className='rounded-md border border-amber-300/70 bg-amber-50 px-2 py-1.5 text-amber-800 dark:bg-amber-950/30 dark:text-amber-200'>
-              缺少 {plan.missingEngines.join(' / ')}
+          {blocked ? (
+            <div className='flex flex-col gap-1.5'>
+              {missing && (
+                <div className='rounded-md border border-amber-300/70 bg-amber-50 px-2 py-1.5 text-amber-800 dark:bg-amber-950/30 dark:text-amber-200'>
+                  缺少 {plan.missingEngines.join(' / ')}
+                </div>
+              )}
+              {missingTranslations && (
+                <div className='rounded-md border border-amber-300/70 bg-amber-50 px-2 py-1.5 text-amber-800 dark:bg-amber-950/30 dark:text-amber-200'>
+                  缺少译文 {plan.counts.missingTranslationBlocks}
+                </div>
+              )}
             </div>
           ) : empty ? (
             <div className='rounded-md border border-border bg-muted/50 px-2 py-1.5 text-muted-foreground'>

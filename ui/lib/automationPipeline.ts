@@ -12,6 +12,7 @@ export type AutomationPlan = {
     letteringBlocks: number
     repairBlocks: number
     dualModeBlocks: number
+    missingTranslationBlocks: number
   }
 }
 
@@ -41,12 +42,17 @@ export function buildAutomationPlan(pipeline: PipelineConfig, scene: Scene | nul
   return {
     steps: uniqueSteps,
     missingEngines,
-    canRun: modes.textBlocks > 0 && uniqueSteps.length > 0 && missingEngines.length === 0,
+    canRun:
+      modes.textBlocks > 0 &&
+      uniqueSteps.length > 0 &&
+      missingEngines.length === 0 &&
+      modes.missingTranslationBlocks === 0,
     counts: {
       textBlocks: modes.textBlocks,
       letteringBlocks: modes.letteringBlocks,
       repairBlocks: modes.repairBlocks,
       dualModeBlocks: modes.dualModeBlocks,
+      missingTranslationBlocks: modes.missingTranslationBlocks,
     },
   }
 }
@@ -58,6 +64,7 @@ function collectProjectWorkflowModes(scene: Scene | null): {
   letteringBlocks: number
   repairBlocks: number
   dualModeBlocks: number
+  missingTranslationBlocks: number
 } {
   let hasLettering = false
   let hasRepair = false
@@ -65,25 +72,48 @@ function collectProjectWorkflowModes(scene: Scene | null): {
   let letteringBlocks = 0
   let repairBlocks = 0
   let dualModeBlocks = 0
+  let missingTranslationBlocks = 0
   if (!scene)
-    return { hasLettering, hasRepair, textBlocks, letteringBlocks, repairBlocks, dualModeBlocks }
+    return {
+      hasLettering,
+      hasRepair,
+      textBlocks,
+      letteringBlocks,
+      repairBlocks,
+      dualModeBlocks,
+      missingTranslationBlocks,
+    }
 
   for (const page of Object.values(scene.pages ?? {})) {
     for (const node of Object.values(page.nodes ?? {})) {
       if (!('text' in node.kind)) continue
       textBlocks += 1
-      const workflow = normalizeWorkflow(node.kind.text as TextData)
+      const text = node.kind.text as TextData
+      const workflow = normalizeWorkflow(text)
       const lettering = workflow.modes?.includes('lettering') ?? false
       const repair = workflow.modes?.includes('repair') ?? false
       if (lettering) letteringBlocks += 1
       if (repair) repairBlocks += 1
       if (lettering && repair) dualModeBlocks += 1
+      if ((lettering || repair) && !hasTranslation(text)) missingTranslationBlocks += 1
       hasLettering ||= lettering
       hasRepair ||= repair
     }
   }
 
-  return { hasLettering, hasRepair, textBlocks, letteringBlocks, repairBlocks, dualModeBlocks }
+  return {
+    hasLettering,
+    hasRepair,
+    textBlocks,
+    letteringBlocks,
+    repairBlocks,
+    dualModeBlocks,
+    missingTranslationBlocks,
+  }
+}
+
+function hasTranslation(text: TextData): boolean {
+  return typeof text.translation === 'string' && text.translation.trim().length > 0
 }
 
 function uniqueNonEmpty(values: Array<string | undefined>): string[] {
