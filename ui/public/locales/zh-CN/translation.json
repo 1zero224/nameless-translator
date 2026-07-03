@@ -259,6 +259,7 @@
   "toolRail": {
     "select": "选择",
     "block": "框选",
+    "lasso": "套索",
     "brush": "画笔",
     "repairBrush": "修复笔",
     "eraser": "橡皮擦"

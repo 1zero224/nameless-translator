@@ -260,6 +260,7 @@
   "toolRail": {
     "select": "Selecionar",
     "block": "Bloco",
+    "lasso": "Lasso",
     "brush": "Pincel",
     "repairBrush": "Pincel de reparo",
     "eraser": "Borracha"

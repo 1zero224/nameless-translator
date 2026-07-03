@@ -292,6 +292,7 @@
   "toolRail": {
     "select": "Select",
     "block": "Block",
+    "lasso": "Lasso",
     "brush": "Brush",
     "repairBrush": "Repair brush",
     "eraser": "Eraser"

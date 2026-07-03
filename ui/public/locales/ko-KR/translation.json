@@ -281,6 +281,7 @@
   "toolRail": {
     "select": "선택",
     "block": "블록",
+    "lasso": "올가미",
     "brush": "브러시",
     "repairBrush": "복구 브러시",
     "eraser": "지우개"

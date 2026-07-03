@@ -12,6 +12,7 @@ import type { ToolMode } from '@/lib/types'
  * end via `onCreateBlock` (which dispatches `Op::AddNode` with a text node).
  */
 export type BlockDraft = {
+  kind: 'rectangle'
   x: number
   y: number
   width: number
@@ -54,6 +55,7 @@ export function useBlockDrafting({
     const MIN = 4
     if (d.width < MIN || d.height < MIN) return
     onCreateBlock({
+      kind: 'rectangle',
       x: Math.round(d.x),
       y: Math.round(d.y),
       width: Math.round(d.width),
@@ -73,7 +75,13 @@ export function useBlockDrafting({
 
       if (first) {
         dragStartRef.current = point
-        const next: BlockDraft = { x: point.x, y: point.y, width: 0, height: 0 }
+        const next: BlockDraft = {
+          kind: 'rectangle',
+          x: point.x,
+          y: point.y,
+          width: 0,
+          height: 0,
+        }
         draftRef.current = next
         setDraft(next)
         clearSelection()
@@ -86,7 +94,7 @@ export function useBlockDrafting({
       const y = Math.min(start.y, point.y)
       const width = Math.abs(point.x - start.x)
       const height = Math.abs(point.y - start.y)
-      const next: BlockDraft = { x, y, width, height }
+      const next: BlockDraft = { kind: 'rectangle', x, y, width, height }
       draftRef.current = next
       setDraft(next)
 

@@ -28,21 +28,21 @@ import {
 } from '@/components/ui/context-menu'
 import { useBlobData } from '@/hooks/useBlobData'
 import { useBlockContextMenu } from '@/hooks/useBlockContextMenu'
-import { useBlockDrafting, type BlockDraft } from '@/hooks/useBlockDrafting'
+import { useBlockDrafting } from '@/hooks/useBlockDrafting'
 import { useBrushCursor } from '@/hooks/useBrushCursor'
 import { useBrushLayerDisplay } from '@/hooks/useBrushLayerDisplay'
 import { useCanvasZoom } from '@/hooks/useCanvasZoom'
 import { findImageBlob, findMaskBlob, useCurrentPage } from '@/hooks/useCurrentPage'
 import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts'
+import { useLassoDrafting, type LassoDraft } from '@/hooks/useLassoDrafting'
 import { useMaskDrawing } from '@/hooks/useMaskDrawing'
 import { usePointerToDocument } from '@/hooks/usePointerToDocument'
 import { useRenderBrushDrawing } from '@/hooks/useRenderBrushDrawing'
-import type { Node, Transform } from '@/lib/api/schemas'
 import { applyOp } from '@/lib/io/scene'
 import { ops } from '@/lib/ops'
 import { useEditorUiStore } from '@/lib/stores/editorUiStore'
 import { useSelectionStore } from '@/lib/stores/selectionStore'
-import { DEFAULT_MANUAL_WORKFLOW } from '@/lib/workflow'
+import { createManualTextNode, type ManualBlockDraft } from '@/lib/textBlocks'
 
 const BRUSH_CURSOR = 'none'
 
@@ -100,23 +100,11 @@ export function Workspace() {
   const pointerToDocument = usePointerToDocument(scaleRatio, canvasRef)
 
   const createTextNode = useCallback(
-    async (draft: BlockDraft) => {
+    async (draft: ManualBlockDraft) => {
       if (!page) return
       const at = Object.keys(page.nodes).length
       const nodeId = crypto.randomUUID()
-      const transform: Transform = {
-        x: draft.x,
-        y: draft.y,
-        width: draft.width,
-        height: draft.height,
-        rotationDeg: 0,
-      }
-      const node: Node = {
-        id: nodeId,
-        transform,
-        visible: true,
-        kind: { text: { lockLayoutBox: true, workflow: DEFAULT_MANUAL_WORKFLOW } },
-      }
+      const node = createManualTextNode(nodeId, draft)
       await applyOp(ops.addNode(page.id, at, node))
       useSelectionStore.getState().selectMany([nodeId])
     },
@@ -135,6 +123,15 @@ export function Workspace() {
   )
 
   const { draftBlock, bind: bindBlockDraft } = useBlockDrafting({
+    mode,
+    page,
+    pointerToDocument,
+    clearSelection,
+    onCreateBlock: (draft) => {
+      void createTextNode(draft)
+    },
+  })
+  const { draftLasso, bind: bindLassoDraft } = useLassoDrafting({
     mode,
     page,
     pointerToDocument,
@@ -178,6 +175,7 @@ export function Workspace() {
     targetCanvasRef: brushLayerDisplay.canvasRef,
   })
   const blockDraftBindings = bindBlockDraft()
+  const lassoDraftBindings = bindLassoDraft()
   const maskBindings = maskDrawing.bind()
   const brushBindings = brushDrawing.bind()
 
@@ -261,7 +259,14 @@ export function Workspace() {
   }
 
   const canvasCursor = useMemo(
-    () => (isBrushMode ? BRUSH_CURSOR : mode === 'block' ? 'cell' : 'default'),
+    () =>
+      isBrushMode
+        ? BRUSH_CURSOR
+        : mode === 'block'
+          ? 'cell'
+          : mode === 'lasso'
+            ? 'crosshair'
+            : 'default',
     [isBrushMode, mode],
   )
 
@@ -305,6 +310,7 @@ export function Workspace() {
                       onPointerDownCapture={handleCanvasPointerDownCapture}
                       onContextMenuCapture={handleCanvasContextMenu}
                       {...blockDraftBindings}
+                      {...lassoDraftBindings}
                     >
                       <div
                         ref={brushCursorRef}
@@ -398,6 +404,7 @@ export function Workspace() {
                           }}
                         />
                       )}
+                      {page && draftLasso && <LassoDraftOverlay page={page} draft={draftLasso} />}
                     </div>
                   </div>
                 </ContextMenuTrigger>
@@ -431,5 +438,44 @@ export function Workspace() {
         </ScrollAreaPrimitive.Root>
       </div>
     </div>
+  )
+}
+
+function LassoDraftOverlay({
+  page,
+  draft,
+}: {
+  page: { width: number; height: number }
+  draft: LassoDraft
+}) {
+  const points = draft.points.map(([x, y]) => `${x},${y}`).join(' ')
+  return (
+    <svg
+      data-testid='workspace-lasso-draft'
+      className='pointer-events-none absolute inset-0 z-40'
+      viewBox={`0 0 ${page.width} ${page.height}`}
+      aria-hidden='true'
+    >
+      <polyline
+        points={points}
+        fill='rgba(244, 63, 94, 0.08)'
+        stroke='rgb(244, 63, 94)'
+        strokeDasharray='6 4'
+        strokeWidth='2'
+        vectorEffect='non-scaling-stroke'
+      />
+      {draft.points.map(([x, y], index) => (
+        <circle
+          key={index}
+          cx={x}
+          cy={y}
+          r='3'
+          fill='rgb(244, 63, 94)'
+          stroke='white'
+          strokeWidth='1.5'
+          vectorEffect='non-scaling-stroke'
+        />
+      ))}
+    </svg>
   )
 }

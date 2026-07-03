@@ -6,6 +6,7 @@ import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts'
 import { getGetSceneJsonQueryKey } from '@/lib/api/default/default'
 import type { Node, Page, SceneSnapshot } from '@/lib/api/schemas'
 import { queryClient } from '@/lib/queryClient'
+import { useEditorUiStore } from '@/lib/stores/editorUiStore'
 import { useSelectionStore } from '@/lib/stores/selectionStore'
 
 function textNode(id: string): Node {
@@ -34,6 +35,7 @@ function seedScene(): SceneSnapshot {
 describe('useKeyboardShortcuts — Ctrl+A', () => {
   beforeEach(() => {
     useSelectionStore.getState().setPage(null)
+    useEditorUiStore.setState({ mode: 'select' })
     queryClient.clear()
   })
 
@@ -61,5 +63,13 @@ describe('useKeyboardShortcuts — Ctrl+A', () => {
     expect(useSelectionStore.getState().nodeIds.size).toBe(0)
 
     document.body.removeChild(textarea)
+  })
+
+  it('L switches to polygon lasso mode', () => {
+    renderHook(() => useKeyboardShortcuts())
+
+    fireEvent.keyDown(window, { key: 'l' })
+
+    expect(useEditorUiStore.getState().mode).toBe('lasso')
   })
 })

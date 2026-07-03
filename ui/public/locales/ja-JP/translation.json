@@ -259,6 +259,7 @@
   "toolRail": {
     "select": "選択",
     "block": "ブロック",
+    "lasso": "投げ縄",
     "brush": "ブラシ",
     "repairBrush": "リペアブラシ",
     "eraser": "消しゴム"

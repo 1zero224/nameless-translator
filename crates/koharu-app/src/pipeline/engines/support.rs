@@ -8,7 +8,8 @@ use image::{DynamicImage, GenericImageView, Rgba, RgbaImage, imageops::FilterTyp
 use koharu_core::{
     BlobRef, FontPrediction, FontWorkflowTrace, ImageData, ImageRole, MaskData, MaskRole, Node,
     NodeDataPatch, NodeId, NodeKind, Op, PageId, ReadingOrder, Region, RepairWorkflowTrace, Scene,
-    TextData, TextDataPatch, TextWorkflow, TextWorkflowMode, Transform, WorkflowStatus,
+    TextData, TextDataPatch, TextSelectionShape, TextWorkflow, TextWorkflowMode, Transform,
+    WorkflowStatus,
 };
 
 use crate::blobs::BlobStore;
@@ -186,6 +187,53 @@ pub fn openai_edit_mask_for_transform(
     mask
 }
 
+/// Build an OpenAI image-edit mask for a text block. If the text workflow has
+/// a supported selection shape, use that selection as the editable region;
+/// otherwise fall back to the block transform.
+pub fn openai_edit_mask_for_text(
+    source_width: u32,
+    source_height: u32,
+    transform: &Transform,
+    text: &TextData,
+) -> RgbaImage {
+    let Some(selection) = text.workflow.selection.as_ref() else {
+        return openai_edit_mask_for_transform(source_width, source_height, transform);
+    };
+    if !selection.shapes.iter().any(is_supported_selection_shape) {
+        return openai_edit_mask_for_transform(source_width, source_height, transform);
+    }
+
+    let mut mask = RgbaImage::from_pixel(source_width, source_height, Rgba([0, 0, 0, 255]));
+    for y in 0..source_height {
+        for x in 0..source_width {
+            if selection
+                .shapes
+                .iter()
+                .any(|shape| selection_shape_contains_pixel(shape, x as f32 + 0.5, y as f32 + 0.5))
+            {
+                mask.put_pixel(x, y, Rgba([0, 0, 0, 0]));
+            }
+        }
+    }
+    mask
+}
+
+fn is_supported_selection_shape(shape: &TextSelectionShape) -> bool {
+    match shape {
+        TextSelectionShape::Rectangle { .. } => true,
+        TextSelectionShape::Polygon { points } => points.len() >= 3,
+        TextSelectionShape::Brush { .. } => false,
+    }
+}
+
+fn selection_shape_contains_pixel(shape: &TextSelectionShape, px: f32, py: f32) -> bool {
+    match shape {
+        TextSelectionShape::Rectangle { transform } => transform_contains_pixel(transform, px, py),
+        TextSelectionShape::Polygon { points } => polygon_contains_pixel(points, px, py),
+        TextSelectionShape::Brush { .. } => false,
+    }
+}
+
 fn transform_contains_pixel(transform: &Transform, px: f32, py: f32) -> bool {
     let cx = transform.x + transform.width / 2.0;
     let cy = transform.y + transform.height / 2.0;
@@ -195,6 +243,32 @@ fn transform_contains_pixel(transform: &Transform, px: f32, py: f32) -> bool {
     let local_x = dx * theta.cos() - dy * theta.sin() + transform.width / 2.0;
     let local_y = dx * theta.sin() + dy * theta.cos() + transform.height / 2.0;
     local_x >= 0.0 && local_x < transform.width && local_y >= 0.0 && local_y < transform.height
+}
+
+fn polygon_contains_pixel(points: &[[f32; 2]], px: f32, py: f32) -> bool {
+    if points.len() < 3 {
+        return false;
+    }
+
+    let mut inside = false;
+    let mut prev = points.len() - 1;
+    for current in 0..points.len() {
+        let [x1, y1] = points[current];
+        let [x2, y2] = points[prev];
+        if x1.is_finite()
+            && y1.is_finite()
+            && x2.is_finite()
+            && y2.is_finite()
+            && (y1 > py) != (y2 > py)
+        {
+            let x_at_y = (x2 - x1) * (py - y1) / (y2 - y1) + x1;
+            if px < x_at_y {
+                inside = !inside;
+            }
+        }
+        prev = current;
+    }
+    inside
 }
 
 /// Convert a full-page edit result into a transparent repair layer by keeping
@@ -771,8 +845,8 @@ mod tests {
     use super::*;
     use image::{Rgba, RgbaImage};
     use koharu_core::{
-        BlobRef, ImageRole, NodeDataPatch, NodeId, NodeKind, ReadingOrder, TextWorkflow,
-        TextWorkflowMode,
+        BlobRef, ImageRole, NodeDataPatch, NodeId, NodeKind, ReadingOrder, TextSelection,
+        TextSelectionShape, TextWorkflow, TextWorkflowMode,
     };
     use koharu_ml::types::TextRegion;
 
@@ -885,6 +959,46 @@ mod tests {
         );
 
         assert_eq!(mask.dimensions(), (20, 20));
+        assert_eq!(mask.get_pixel(6, 7).0[3], 0);
+        assert_eq!(mask.get_pixel(0, 0).0[3], 255);
+    }
+
+    #[test]
+    fn openai_edit_mask_for_text_uses_polygon_selection_when_present() {
+        let mut text = TextData::default();
+        text.workflow.selection = Some(TextSelection {
+            shapes: vec![TextSelectionShape::Polygon {
+                points: vec![[2.0, 2.0], [9.0, 2.0], [2.0, 9.0]],
+            }],
+        });
+        let fallback_transform = Transform {
+            x: 0.0,
+            y: 0.0,
+            width: 12.0,
+            height: 12.0,
+            rotation_deg: 0.0,
+        };
+
+        let mask = openai_edit_mask_for_text(12, 12, &fallback_transform, &text);
+
+        assert_eq!(mask.get_pixel(3, 3).0[3], 0);
+        assert_eq!(mask.get_pixel(8, 8).0[3], 255);
+        assert_eq!(mask.get_pixel(11, 11).0[3], 255);
+    }
+
+    #[test]
+    fn openai_edit_mask_for_text_falls_back_to_transform_without_selection() {
+        let text = TextData::default();
+        let transform = Transform {
+            x: 5.0,
+            y: 6.0,
+            width: 4.0,
+            height: 3.0,
+            rotation_deg: 0.0,
+        };
+
+        let mask = openai_edit_mask_for_text(20, 20, &transform, &text);
+
         assert_eq!(mask.get_pixel(6, 7).0[3], 0);
         assert_eq!(mask.get_pixel(0, 0).0[3], 255);
     }

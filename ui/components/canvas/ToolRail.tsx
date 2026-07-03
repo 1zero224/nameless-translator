@@ -1,6 +1,14 @@
 'use client'
 
-import { MousePointer, VectorSquare, Brush, Bandage, Eraser, PanelLeft } from 'lucide-react'
+import {
+  MousePointer,
+  VectorSquare,
+  LassoSelect,
+  Brush,
+  Bandage,
+  Eraser,
+  PanelLeft,
+} from 'lucide-react'
 import type { ComponentType } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -29,6 +37,12 @@ const MODES: ModeDefinition[] = [
     value: 'block',
     icon: VectorSquare,
     testId: 'tool-block',
+  },
+  {
+    labelKey: 'toolRail.lasso',
+    value: 'lasso',
+    icon: LassoSelect,
+    testId: 'tool-lasso',
   },
   {
     labelKey: 'toolRail.brush',

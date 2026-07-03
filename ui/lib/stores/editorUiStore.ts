@@ -121,7 +121,7 @@ export const useEditorUiStore = create<EditorUiState>((set) => ({
     } else if (mode !== 'eraser') {
       set({ showSegmentationMask: false })
       if (mode === 'brush') set({ showBrushLayer: true })
-      else if (mode === 'block') set({ showTextBlocksOverlay: true })
+      else if (mode === 'block' || mode === 'lasso') set({ showTextBlocksOverlay: true })
     }
   },
 

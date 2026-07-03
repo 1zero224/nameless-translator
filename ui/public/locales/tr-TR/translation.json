@@ -259,6 +259,7 @@
   "toolRail": {
     "select": "Seç",
     "block": "Blok",
+    "lasso": "Lasso",
     "brush": "Fırça",
     "repairBrush": "Onarım fırçası",
     "eraser": "Silgi"

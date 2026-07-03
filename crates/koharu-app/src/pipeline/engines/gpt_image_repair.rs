@@ -13,7 +13,7 @@ use serde::Deserialize;
 use crate::pipeline::artifacts::Artifact;
 use crate::pipeline::engine::{Engine, EngineCtx, EngineInfo};
 use crate::pipeline::engines::support::{
-    build_bound_repair_layer_ops, load_source_image, openai_edit_mask_for_transform,
+    build_bound_repair_layer_ops, load_source_image, openai_edit_mask_for_text,
     remove_bound_repair_layer_op, repair_layer_image_from_edit_output, repair_text_nodes,
     update_text_workflow_op,
 };
@@ -61,7 +61,7 @@ impl Engine for Model {
                     continue;
                 }
             };
-            let mask = openai_edit_mask_for_transform(source_width, source_height, transform);
+            let mask = openai_edit_mask_for_text(source_width, source_height, transform, text);
             let mask_image = DynamicImage::ImageRgba8(mask.clone());
             let mask_png = encode_png(&mask_image)?;
             let mask_blob = ctx.blobs.put_bytes(&mask_png)?;

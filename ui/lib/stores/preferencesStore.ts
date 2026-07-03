@@ -24,6 +24,7 @@ type PreferencesState = {
   shortcuts: {
     select: string
     block: string
+    lasso: string
     brush: string
     eraser: string
     repairBrush: string
@@ -54,6 +55,7 @@ const initialPreferences = {
   shortcuts: {
     select: 'V',
     block: 'M',
+    lasso: 'L',
     brush: 'B',
     eraser: 'E',
     repairBrush: 'R',
@@ -119,7 +121,7 @@ export const usePreferencesStore = create<PreferencesState>()(
     }),
     {
       name: 'koharu-config',
-      version: 7,
+      version: 8,
       migrate: (persisted: any, version: number) => {
         if (version < 2 && persisted) {
           delete persisted.localLlm
@@ -153,6 +155,13 @@ export const usePreferencesStore = create<PreferencesState>()(
         }
         if (persisted && (version < 7 || persisted.customPipeline?.detect === undefined)) {
           persisted.customPipeline = initialPreferences.customPipeline
+        }
+        if (persisted && (version < 8 || !persisted.shortcuts?.lasso)) {
+          persisted.shortcuts = {
+            ...initialPreferences.shortcuts,
+            ...persisted.shortcuts,
+            lasso: persisted.shortcuts?.lasso ?? initialPreferences.shortcuts.lasso,
+          }
         }
         return persisted
       },

@@ -259,6 +259,7 @@
   "toolRail": {
     "select": "Выделение",
     "block": "Блок",
+    "lasso": "Lasso",
     "brush": "Кисть",
     "repairBrush": "Кисть восстановления",
     "eraser": "Ластик"

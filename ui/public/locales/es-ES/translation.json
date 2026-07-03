@@ -259,6 +259,7 @@
   "toolRail": {
     "select": "Seleccionar",
     "block": "Bloque",
+    "lasso": "Lasso",
     "brush": "Pincel",
     "repairBrush": "Pincel de reparación",
     "eraser": "Borrador"
