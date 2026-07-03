@@ -83,6 +83,14 @@ pub fn lettering_text_nodes(scene: &Scene, page: PageId) -> Vec<(NodeId, &Transf
         .collect()
 }
 
+/// Text regions that should guide lettering-mode cleanup/inpainting.
+pub fn lettering_text_regions(scene: &Scene, page: PageId) -> Vec<koharu_ml::types::TextRegion> {
+    lettering_text_nodes(scene, page)
+        .into_iter()
+        .map(|(_, transform, text)| text_node_to_region(transform, text))
+        .collect()
+}
+
 /// Text nodes that should participate in repair workflows.
 pub fn repair_text_nodes(scene: &Scene, page: PageId) -> Vec<(NodeId, &Transform, &TextData)> {
     text_nodes(scene, page)
@@ -636,6 +644,25 @@ pub fn upsert_image_blob(
     }
 }
 
+/// Write the full-page lettering cleanup result without changing per-block
+/// repair workflow state. Repair status is owned by repair-layer engines.
+pub fn inpainted_image_ops(
+    scene: &Scene,
+    page: PageId,
+    blob: BlobRef,
+    natural_width: u32,
+    natural_height: u32,
+) -> Vec<Op> {
+    vec![upsert_image_blob(
+        scene,
+        page,
+        ImageRole::Inpainted,
+        blob,
+        natural_width,
+        natural_height,
+    )]
+}
+
 /// Replace or add a `Mask { role }` blob for `page`.
 pub fn upsert_mask_blob(scene: &Scene, page: PageId, role: MaskRole, blob: BlobRef) -> Op {
     if let Some((node_id, _)) = find_mask_node(scene, page, role) {
@@ -1078,6 +1105,87 @@ mod tests {
             Op::UpdateNode { id, .. } => assert_eq!(*id, near_id),
             other => panic!("expected UpdateNode, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn lettering_text_regions_excludes_repair_only_nodes() {
+        let page_id = PageId::new();
+        let lettering_id = NodeId::new();
+        let repair_id = NodeId::new();
+        let dual_id = NodeId::new();
+        let mut scene = Scene::default();
+        let mut page = koharu_core::Page::new("p1", 500, 500);
+        page.id = page_id;
+
+        for (node_id, x, modes) in [
+            (lettering_id, 10.0, vec![TextWorkflowMode::Lettering]),
+            (repair_id, 80.0, vec![TextWorkflowMode::Repair]),
+            (
+                dual_id,
+                150.0,
+                vec![TextWorkflowMode::Lettering, TextWorkflowMode::Repair],
+            ),
+        ] {
+            page.nodes.insert(
+                node_id,
+                Node {
+                    id: node_id,
+                    transform: Transform {
+                        x,
+                        y: 20.0,
+                        width: 30.0,
+                        height: 40.0,
+                        rotation_deg: 0.0,
+                    },
+                    visible: true,
+                    kind: NodeKind::Text(TextData {
+                        workflow: TextWorkflow {
+                            modes,
+                            ..Default::default()
+                        },
+                        ..Default::default()
+                    }),
+                },
+            );
+        }
+        scene.pages.insert(page_id, page);
+
+        let regions = lettering_text_regions(&scene, page_id);
+
+        assert_eq!(regions.len(), 2);
+        assert_eq!(regions[0].x, 10.0);
+        assert_eq!(regions[1].x, 150.0);
+    }
+
+    #[test]
+    fn inpainted_image_ops_do_not_mark_repair_workflows() {
+        let page_id = PageId::new();
+        let text_id = NodeId::new();
+        let mut scene = Scene::default();
+        let mut page = koharu_core::Page::new("p1", 500, 500);
+        page.id = page_id;
+        page.nodes.insert(
+            text_id,
+            Node {
+                id: text_id,
+                transform: Transform::default(),
+                visible: true,
+                kind: NodeKind::Text(TextData {
+                    workflow: TextWorkflow {
+                        modes: vec![TextWorkflowMode::Repair],
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                }),
+            },
+        );
+        scene.pages.insert(page_id, page);
+
+        let ops = inpainted_image_ops(&scene, page_id, BlobRef::new("inpainted"), 500, 500);
+
+        assert_eq!(ops.len(), 1);
+        assert!(matches!(ops[0], Op::AddNode { .. }));
+        assert!(!ops.iter().any(|op| matches!(op, Op::UpdateNode { .. })));
     }
 
     #[test]

@@ -21,8 +21,8 @@ use koharu_ml::lama::Lama;
 use crate::pipeline::artifacts::Artifact;
 use crate::pipeline::engine::{Engine, EngineCtx, EngineInfo};
 use crate::pipeline::engines::support::{
-    find_image_node, find_mask_node, image_dimensions, load_source_image,
-    mark_repair_succeeded_ops, text_node_to_region, text_nodes, upsert_image_blob,
+    find_image_node, find_mask_node, image_dimensions, inpainted_image_ops, lettering_text_regions,
+    load_source_image,
 };
 
 pub struct Model(Lama);
@@ -53,10 +53,7 @@ impl Engine for Model {
             }
         };
 
-        let text_blocks = text_nodes(ctx.scene, ctx.page)
-            .into_iter()
-            .map(|(_, transform, text)| text_node_to_region(transform, text))
-            .collect::<Vec<_>>();
+        let text_blocks = lettering_text_regions(ctx.scene, ctx.page);
         let expanded = expand_mask_for_inpainting(&mask, &bubble_mask, &text_blocks);
         let mask = match ctx.options.region {
             Some(r) => clip_mask_to_region(&DynamicImage::ImageLuma8(expanded), &r),
@@ -71,21 +68,7 @@ impl Engine for Model {
         };
         let (w, h) = image_dimensions(&result);
         let blob = ctx.blobs.put_webp(&result)?;
-        let mut ops = vec![upsert_image_blob(
-            ctx.scene,
-            ctx.page,
-            ImageRole::Inpainted,
-            blob,
-            w,
-            h,
-        )];
-        ops.extend(mark_repair_succeeded_ops(
-            ctx.scene,
-            ctx.page,
-            "lama-manga",
-            ctx.options.region,
-        ));
-        Ok(ops)
+        Ok(inpainted_image_ops(ctx.scene, ctx.page, blob, w, h))
     }
 }
 
