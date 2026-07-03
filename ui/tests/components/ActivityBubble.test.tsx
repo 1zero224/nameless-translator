@@ -41,6 +41,27 @@ describe('ActivityBubble', () => {
     expect(screen.getByText(/25%/)).toBeInTheDocument()
   })
 
+  it('keeps completed pipeline warnings visible until dismissed', async () => {
+    useJobsStore.getState().started('job-warn', 'pipeline')
+    useJobsStore.getState().warning({
+      jobId: 'job-warn',
+      stepId: 'gpt-image-2-repair',
+      pageIndex: 1,
+      totalPages: 3,
+      message: 'repair block t2 failed',
+    })
+    useJobsStore.getState().finished('job-warn', 'completed', null)
+
+    renderWithQuery(<ActivityBubble />)
+
+    expect(screen.getByTestId('operation-warning-summary')).toBeInTheDocument()
+    expect(screen.getByText('自动化完成，有 1 条警告')).toBeInTheDocument()
+    expect(screen.getByText('repair block t2 failed')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: '关闭警告' }))
+    expect(screen.queryByTestId('operation-warning-summary')).not.toBeInTheDocument()
+  })
+
   it('cancelling a job calls DELETE /operations/{id}', async () => {
     useJobsStore.getState().started('job-1', 'pipeline')
     const deletes: string[] = []

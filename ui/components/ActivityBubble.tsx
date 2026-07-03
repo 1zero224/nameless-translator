@@ -1,7 +1,7 @@
 'use client'
 
 import { AlertTriangleIcon, CircleXIcon } from 'lucide-react'
-import { type ReactNode } from 'react'
+import { type ReactNode, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
@@ -152,6 +152,64 @@ function JobWarnings({ warnings, t }: { warnings: JobWarningEvent[]; t: Translat
   )
 }
 
+function CompletedWarningCard({
+  job,
+  onDismiss,
+  t,
+}: {
+  job: JobEntry
+  onDismiss: () => void
+  t: TranslateFunc
+}) {
+  const warnings = job.warnings ?? []
+  const latest = warnings[warnings.length - 1]
+  if (!latest) return null
+  const pageLabel =
+    typeof latest.totalPages === 'number' && latest.totalPages > 1
+      ? t('operations.imageProgress', {
+          current: latest.pageIndex + 1,
+          total: latest.totalPages,
+        })
+      : undefined
+
+  return (
+    <div
+      data-testid='operation-warning-summary'
+      className='rounded-2xl border border-amber-200/80 bg-card/95 p-4 shadow-[0_15px_60px_rgba(0,0,0,0.12)] backdrop-blur dark:border-amber-900/80'
+    >
+      <div className='flex items-start gap-3'>
+        <div className='mt-0.5 flex h-8 w-8 items-center justify-center rounded-full bg-amber-100 text-amber-700 dark:bg-amber-950/70 dark:text-amber-300'>
+          <AlertTriangleIcon className='size-4' />
+        </div>
+        <div className='min-w-0 flex-1'>
+          <div className='flex items-start justify-between gap-3'>
+            <div className='min-w-0'>
+              <div className='text-sm font-semibold text-amber-800 dark:text-amber-200'>
+                自动化完成，有 {warnings.length} 条警告
+              </div>
+              <div className='mt-0.5 truncate text-[11px] text-amber-800/80 dark:text-amber-200/80'>
+                {[latest.stepId, pageLabel].filter(Boolean).join(' \u00b7 ')}
+              </div>
+              <div className='mt-1 line-clamp-3 text-xs break-words text-amber-900/90 dark:text-amber-100/90'>
+                {latest.message}
+              </div>
+            </div>
+            <Button
+              variant='ghost'
+              size='icon-xs'
+              onClick={onDismiss}
+              className='text-amber-700 hover:bg-amber-50 hover:text-amber-800 dark:text-amber-300 dark:hover:bg-amber-950/60'
+              aria-label='关闭警告'
+            >
+              <CircleXIcon className='size-3.5' />
+            </Button>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function JobCard({ job, onCancel, t }: { job: JobEntry; onCancel: () => void; t: TranslateFunc }) {
   const progress: PipelineProgress | undefined = job.progress
   const percent = clampProgress(progress?.overallPercent)
@@ -209,6 +267,7 @@ function JobCard({ job, onCancel, t }: { job: JobEntry; onCancel: () => void; t:
 
 export function ActivityBubble() {
   const { t } = useTranslation()
+  const [dismissedWarningJobs, setDismissedWarningJobs] = useState<Set<string>>(() => new Set())
   const jobs = useJobsStore((s) => s.jobs)
   const downloads = useDownloadsStore((s) => s.downloads)
   const uiError = useEditorUiStore((s) => s.error)
@@ -217,19 +276,44 @@ export function ActivityBubble() {
   const runningJobs = Object.values(jobs).filter(
     (j: JobSummary) => j.status === 'running',
   ) as JobEntry[]
+  const completedWarningJobs = Object.values(jobs).filter(
+    (j): j is JobEntry =>
+      j.status !== 'running' && (j.warnings?.length ?? 0) > 0 && !dismissedWarningJobs.has(j.id),
+  )
   const activeDownloads: DownloadProgress[] = Object.values(downloads).filter((d) => {
     const s = d.status.status
     return s === 'started' || s === 'downloading'
   })
 
   const errorMessage = uiError?.message
-  if (!errorMessage && runningJobs.length === 0 && activeDownloads.length === 0) return null
+  if (
+    !errorMessage &&
+    runningJobs.length === 0 &&
+    completedWarningJobs.length === 0 &&
+    activeDownloads.length === 0
+  ) {
+    return null
+  }
 
   return (
     <div className='pointer-events-auto fixed right-6 bottom-6 z-100 flex w-80 max-w-[calc(100%-1.5rem)] flex-col gap-3'>
       {errorMessage && <ErrorCard message={errorMessage} onDismiss={clearUiError} t={t} />}
       {runningJobs.map((job) => (
         <JobCard key={job.id} job={job} onCancel={() => void cancelOperation(job.id)} t={t} />
+      ))}
+      {completedWarningJobs.map((job) => (
+        <CompletedWarningCard
+          key={job.id}
+          job={job}
+          onDismiss={() =>
+            setDismissedWarningJobs((prev) => {
+              const next = new Set(prev)
+              next.add(job.id)
+              return next
+            })
+          }
+          t={t}
+        />
       ))}
       {activeDownloads.map((d) => {
         const percent =
