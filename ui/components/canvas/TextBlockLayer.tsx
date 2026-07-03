@@ -11,6 +11,7 @@ import { applyOp, queueAutoRender } from '@/lib/io/scene'
 import { ops } from '@/lib/ops'
 import { useEditorUiStore } from '@/lib/stores/editorUiStore'
 import { useSelectionStore } from '@/lib/stores/selectionStore'
+import { resolveRotationDrag, type Point } from '@/lib/textBlockTransforms'
 
 type TextBlockLayerProps = {
   showSprites?: boolean
@@ -122,8 +123,14 @@ const isAdditiveEvent = (event: unknown): boolean => {
 }
 
 const RESIZE_HANDLE_SIZE = 8
+const ROTATE_HANDLE_OFFSET = 24
 
 type ResizeEdge = { top: boolean; bottom: boolean; left: boolean; right: boolean }
+type RotationDragStart = {
+  center: Point
+  startPoint: Point
+  rotationDeg: number
+}
 
 function TextBlockItem({
   node,
@@ -136,13 +143,15 @@ function TextBlockItem({
 }: TextBlockItemProps) {
   const boxRef = useRef<HTMLDivElement>(null)
   const dragStart = useRef({ x: 0, y: 0, w: 0, h: 0 })
+  const rotationStart = useRef<RotationDragStart | null>(null)
   const edgeRef = useRef<ResizeEdge | null>(null)
   const isResizeRef = useRef(false)
+  const isRotateRef = useRef(false)
 
-  const setBox = (x: number, y: number, w: number, h: number) => {
+  const setBox = (x: number, y: number, w: number, h: number, rotationDeg: number) => {
     const el = boxRef.current
     if (!el) return
-    el.style.transform = `translate(${x}px, ${y}px)`
+    el.style.transform = `translate(${x}px, ${y}px) rotate(${rotationDeg}deg)`
     el.style.width = `${w}px`
     el.style.height = `${h}px`
   }
@@ -155,6 +164,13 @@ function TextBlockItem({
       event?.stopPropagation()
       const additive = isAdditiveEvent(event)
       if (tap) {
+        if (isResizeRef.current || isRotateRef.current) {
+          isResizeRef.current = false
+          isRotateRef.current = false
+          edgeRef.current = null
+          rotationStart.current = null
+          return
+        }
         onSelect(node.id, additive)
         return
       }
@@ -165,13 +181,38 @@ function TextBlockItem({
           w: t.width * scale,
           h: t.height * scale,
         }
+        if (isRotateRef.current) {
+          rotationStart.current = rotationDragStart(boxRef.current, event, t.rotationDeg ?? 0)
+        }
         // Keep multi-selection intact when dragging a node that's already selected;
         // otherwise this click is a single-select (unless the modifier is held).
         if (additive || !selected) onSelect(node.id, additive)
       }
       const { x: sx, y: sy, w: sw, h: sh } = dragStart.current
       const edge = edgeRef.current
-      if (isResizeRef.current && edge) {
+      if (isRotateRef.current) {
+        const currentPoint = pointFromEvent(event)
+        const start = rotationStart.current
+        if (!currentPoint || !start) return
+        const rotationDeg = resolveRotationDrag({
+          center: start.center,
+          startPoint: start.startPoint,
+          currentPoint,
+          startRotationDeg: start.rotationDeg,
+        })
+        setBox(sx, sy, sw, sh, rotationDeg)
+        if (last) {
+          isRotateRef.current = false
+          rotationStart.current = null
+          onCommit({
+            x: t.x,
+            y: t.y,
+            width: t.width,
+            height: t.height,
+            rotationDeg,
+          })
+        }
+      } else if (isResizeRef.current && edge) {
         let dx = 0
         let dy = 0
         let w = sw
@@ -190,7 +231,7 @@ function TextBlockItem({
         h = Math.max(4 * scale, h)
         if (edge.left && w === 4 * scale) dx = sw - 4 * scale
         if (edge.top && h === 4 * scale) dy = sh - 4 * scale
-        setBox(sx + dx, sy + dy, w, h)
+        setBox(sx + dx, sy + dy, w, h, t.rotationDeg ?? 0)
         if (last) {
           isResizeRef.current = false
           edgeRef.current = null
@@ -203,7 +244,7 @@ function TextBlockItem({
           })
         }
       } else {
-        setBox(sx + mx, sy + my, sw, sh)
+        setBox(sx + mx, sy + my, sw, sh, t.rotationDeg ?? 0)
         if (last) {
           onCommit({
             x: Math.round((sx + mx) / scale),
@@ -229,20 +270,29 @@ function TextBlockItem({
     edgeRef.current = edge
   }
 
+  const handleRotatePointerDown = () => {
+    if (!interactive || !selected) return
+    isRotateRef.current = true
+    rotationStart.current = null
+  }
+
   const w = t.width * scale
   const h = t.height * scale
+  const rotationDeg = t.rotationDeg ?? 0
 
   return (
     <div
       ref={boxRef}
       {...bind()}
+      data-testid={`text-block-${node.id}`}
       style={{
         position: 'absolute',
         top: 0,
         left: 0,
-        transform: `translate(${t.x * scale}px, ${t.y * scale}px)`,
+        transform: `translate(${t.x * scale}px, ${t.y * scale}px) rotate(${rotationDeg}deg)`,
         width: w,
         height: h,
+        transformOrigin: 'center center',
         pointerEvents: interactive ? 'auto' : 'none',
         zIndex: selected ? 20 : 10,
         touchAction: 'none',
@@ -263,9 +313,36 @@ function TextBlockItem({
       >
         {index + 1}
       </div>
-      {selected && interactive && <ResizeHandles onEdgePointerDown={handleEdgePointerDown} />}
+      {selected && interactive && (
+        <>
+          <RotateHandle nodeId={node.id} onPointerDown={handleRotatePointerDown} />
+          <ResizeHandles onEdgePointerDown={handleEdgePointerDown} />
+        </>
+      )}
     </div>
   )
+}
+
+function pointFromEvent(event: unknown): Point | null {
+  if (!event || typeof event !== 'object') return null
+  const e = event as { clientX?: number; clientY?: number }
+  if (typeof e.clientX !== 'number' || typeof e.clientY !== 'number') return null
+  return { x: e.clientX, y: e.clientY }
+}
+
+function rotationDragStart(
+  el: HTMLElement | null,
+  event: unknown,
+  rotationDeg: number,
+): RotationDragStart | null {
+  const point = pointFromEvent(event)
+  if (!el || !point) return null
+  const rect = el.getBoundingClientRect()
+  return {
+    center: { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 },
+    startPoint: point,
+    rotationDeg,
+  }
 }
 
 function BlockSprite({ node, scale }: { node: TextNodeEntry; scale: number }) {
@@ -288,6 +365,29 @@ function BlockSprite({ node, scale }: { node: TextNodeEntry; scale: number }) {
         transform: `translate(${x}px, ${y}px) scale(${scale})`,
       }}
     />
+  )
+}
+
+function RotateHandle({ nodeId, onPointerDown }: { nodeId: string; onPointerDown: () => void }) {
+  return (
+    <>
+      <div
+        aria-hidden='true'
+        className='pointer-events-none absolute left-1/2 w-px -translate-x-1/2 bg-primary/70'
+        style={{ top: -ROTATE_HANDLE_OFFSET, height: ROTATE_HANDLE_OFFSET - 6 }}
+      />
+      <div
+        data-testid={`text-block-rotate-${nodeId}`}
+        aria-label='Rotate text block'
+        onPointerDown={onPointerDown}
+        className='absolute left-1/2 size-3 -translate-x-1/2 rounded-full border-2 border-white bg-primary shadow-sm'
+        style={{
+          top: -ROTATE_HANDLE_OFFSET - 6,
+          cursor: 'grab',
+          zIndex: 35,
+        }}
+      />
+    </>
   )
 }
 
