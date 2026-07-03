@@ -404,7 +404,14 @@ pub fn build_bound_repair_layer_ops(
         .map(|(_, index)| (*index).min(page_ref.nodes.len().saturating_sub(1)))
         .unwrap_or(page_ref.nodes.len());
     let workflow = workflow_with_bound_repair_layer(text, layer_id, mask_blob, model, prompt);
-    let node = bound_repair_layer_node(layer_id, layer_blob, natural_width, natural_height, model);
+    let node = bound_repair_layer_node(
+        layer_id,
+        text_id,
+        layer_blob,
+        natural_width,
+        natural_height,
+        model,
+    );
     let mut ops = Vec::with_capacity(3);
     if let Some((remove_op, _)) = previous_layer {
         ops.push(remove_op);
@@ -459,6 +466,7 @@ fn workflow_with_bound_repair_layer(
 
 fn bound_repair_layer_node(
     id: NodeId,
+    text_id: NodeId,
     blob: BlobRef,
     natural_width: u32,
     natural_height: u32,
@@ -480,7 +488,7 @@ fn bound_repair_layer_node(
             opacity: 1.0,
             natural_width,
             natural_height,
-            name: Some(format!("{model} repair")),
+            name: Some(format!("Repair {text_id} ({model})")),
         }),
     }
 }
@@ -1262,7 +1270,10 @@ mod tests {
                 assert_eq!(image.blob, layer_blob);
                 assert_eq!(image.natural_width, 100);
                 assert_eq!(image.natural_height, 120);
-                assert_eq!(image.name.as_deref(), Some("gpt-image-2 repair"));
+                assert_eq!(
+                    image.name.as_deref(),
+                    Some(format!("Repair {text_id} (gpt-image-2)").as_str())
+                );
                 node.id
             }
             other => panic!("expected AddNode, got {other:?}"),

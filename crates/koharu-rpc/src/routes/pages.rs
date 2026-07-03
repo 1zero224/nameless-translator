@@ -458,6 +458,7 @@ fn bind_repair_layer_op(
     ensure_repair_text_node(scene, page_id, text_id)?;
     let mut workflow = current_text_workflow(scene, page_id, text_id)?;
     workflow.repair_layer = Some(layer_id);
+    let add_node = name_bound_repair_layer_op(add_node, text_id);
     Ok(Op::Batch {
         ops: vec![
             add_node,
@@ -476,6 +477,22 @@ fn bind_repair_layer_op(
         ],
         label: "Add repair image layer".into(),
     })
+}
+
+fn name_bound_repair_layer_op(add_node: Op, text_id: NodeId) -> Op {
+    match add_node {
+        Op::AddNode { page, mut node, at } => {
+            if let NodeKind::Image(image) = &mut node.kind {
+                let source = image
+                    .name
+                    .clone()
+                    .unwrap_or_else(|| String::from("repair layer"));
+                image.name = Some(format!("Repair {text_id} ({source})"));
+            }
+            Op::AddNode { page, node, at }
+        }
+        other => other,
+    }
 }
 
 fn current_text_workflow(
@@ -832,12 +849,13 @@ mod tests {
             panic!("expected text");
         };
         assert_eq!(text.workflow.repair_layer, Some(layer_id));
-        assert!(matches!(
-            page.nodes.get(&layer_id).expect("layer").kind,
-            NodeKind::Image(ImageData {
-                role: ImageRole::Custom,
-                ..
-            })
-        ));
+        let NodeKind::Image(image) = &page.nodes.get(&layer_id).expect("layer").kind else {
+            panic!("expected image layer");
+        };
+        assert_eq!(image.role, ImageRole::Custom);
+        assert_eq!(
+            image.name.as_deref(),
+            Some(format!("Repair {text_id} (repair.png)").as_str())
+        );
     }
 }
