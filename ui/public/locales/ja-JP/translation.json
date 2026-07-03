@@ -392,6 +392,7 @@
     "ocr": "OCR",
     "translator": "翻訳器",
     "inpainter": "インペインター",
+    "repairer": "リペアラー",
     "renderer": "レンダラー",
     "keybinds": "キーバインド",
     "keybindsDescription": "ツールやアクションのショートカットキーをカスタマイズします。",

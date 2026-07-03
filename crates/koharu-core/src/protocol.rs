@@ -181,6 +181,7 @@ pub struct EngineCatalog {
     pub ocr: Vec<EngineCatalogEntry>,
     pub translators: Vec<EngineCatalogEntry>,
     pub inpainters: Vec<EngineCatalogEntry>,
+    pub repairers: Vec<EngineCatalogEntry>,
     pub renderers: Vec<EngineCatalogEntry>,
 }
 
@@ -230,6 +231,7 @@ pub struct PipelineConfigPatch {
     pub ocr: Option<String>,
     pub translator: Option<String>,
     pub inpainter: Option<String>,
+    pub repairer: Option<String>,
     pub renderer: Option<String>,
 }
 

@@ -74,7 +74,14 @@ async fn start_pipeline(
     let steps = req
         .steps
         .iter()
-        .map(|id| koharu_app::pipeline::resolve_inpainter_alias(id).into_owned())
+        .map(|id| {
+            let repairer = koharu_app::pipeline::resolve_repairer_alias(id);
+            if repairer.as_ref() != id.trim() {
+                repairer.into_owned()
+            } else {
+                koharu_app::pipeline::resolve_inpainter_alias(id).into_owned()
+            }
+        })
         .collect::<Vec<_>>();
     // Validate every step resolves to a registered engine before spawning.
     for id in &steps {

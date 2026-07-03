@@ -392,6 +392,7 @@
     "ocr": "OCR",
     "translator": "翻译器",
     "inpainter": "修补器",
+    "repairer": "修图器",
     "renderer": "渲染器",
     "keybinds": "快捷键",
     "keybindsDescription": "自定义工具和操作的快捷键。",

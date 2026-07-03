@@ -25,6 +25,7 @@ import {
 } from '@/components/ui/select'
 import { Separator } from '@/components/ui/separator'
 import { Textarea } from '@/components/ui/textarea'
+import { useScene } from '@/hooks/useScene'
 import {
   deleteCurrentLlm,
   getConfig,
@@ -38,7 +39,6 @@ import { useEditorUiStore } from '@/lib/stores/editorUiStore'
 import { useJobsStore } from '@/lib/stores/jobsStore'
 import { usePreferencesStore } from '@/lib/stores/preferencesStore'
 import { useSelectionStore } from '@/lib/stores/selectionStore'
-import { useScene } from '@/hooks/useScene'
 
 // ---------------------------------------------------------------------------
 // Helpers (inlined from former llmTargets util)
@@ -150,7 +150,12 @@ function WorkflowButtons() {
   const translateChain: PipelinePick = (p) => [p.translator!]
   const inpaintChain: PipelinePick = (p) => [p.inpainter!]
   const renderChain: PipelinePick = (p) => [p.renderer!]
-  const automationChain: PipelinePick = (p) => [p.font_detector!, p.inpainter!, p.renderer!]
+  const automationChain: PipelinePick = (p) => [
+    p.font_detector!,
+    p.inpainter!,
+    p.repairer!,
+    p.renderer!,
+  ]
 
   const isDetecting = currentStep === 'detect'
   const isOcr = currentStep === 'ocr'

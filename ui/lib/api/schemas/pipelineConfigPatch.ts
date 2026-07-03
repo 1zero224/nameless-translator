@@ -5,19 +5,21 @@
 
 export interface PipelineConfigPatch {
   /** @nullable */
-  bubbleSegmenter?: string | null;
+  bubbleSegmenter?: string | null
   /** @nullable */
-  detector?: string | null;
+  detector?: string | null
   /** @nullable */
-  fontDetector?: string | null;
+  fontDetector?: string | null
   /** @nullable */
-  inpainter?: string | null;
+  inpainter?: string | null
   /** @nullable */
-  ocr?: string | null;
+  ocr?: string | null
   /** @nullable */
-  renderer?: string | null;
+  renderer?: string | null
   /** @nullable */
-  segmenter?: string | null;
+  repairer?: string | null
   /** @nullable */
-  translator?: string | null;
+  segmenter?: string | null
+  /** @nullable */
+  translator?: string | null
 }

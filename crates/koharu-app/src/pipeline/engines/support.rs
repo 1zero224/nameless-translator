@@ -246,16 +246,44 @@ pub fn build_bound_repair_layer_ops(
         anyhow::bail!("node {} is not text", text_id);
     };
     let layer_id = NodeId::new();
+    let previous_layer = remove_bound_repair_layer_op(scene, page, text);
+    let add_at = previous_layer
+        .as_ref()
+        .map(|(_, index)| (*index).min(page_ref.nodes.len().saturating_sub(1)))
+        .unwrap_or(page_ref.nodes.len());
     let workflow = workflow_with_bound_repair_layer(text, layer_id, mask_blob, model, prompt);
     let node = bound_repair_layer_node(layer_id, layer_blob, natural_width, natural_height, model);
-    Ok(vec![
-        Op::AddNode {
+    let mut ops = Vec::with_capacity(3);
+    if let Some((remove_op, _)) = previous_layer {
+        ops.push(remove_op);
+    }
+    ops.push(Op::AddNode {
+        page,
+        node,
+        at: add_at,
+    });
+    ops.push(update_text_workflow_op(page, text_id, workflow));
+    Ok(ops)
+}
+
+pub fn remove_bound_repair_layer_op(
+    scene: &Scene,
+    page: PageId,
+    text: &TextData,
+) -> Option<(Op, usize)> {
+    let layer_id = text.workflow.repair_layer?;
+    let page_ref = scene.page(page)?;
+    let index = page_ref.nodes.get_index_of(&layer_id)?;
+    let node = page_ref.nodes.get(&layer_id)?.clone();
+    Some((
+        Op::RemoveNode {
             page,
-            node,
-            at: page_ref.nodes.len(),
+            id: layer_id,
+            prev_node: node,
+            prev_index: index,
         },
-        update_text_workflow_op(page, text_id, workflow),
-    ])
+        index,
+    ))
 }
 
 fn workflow_with_bound_repair_layer(
@@ -981,6 +1009,83 @@ mod tests {
                 assert_eq!(trace.source_mask.as_ref(), Some(&mask_blob));
             }
             other => panic!("expected UpdateNode, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn build_bound_repair_layer_ops_removes_previous_bound_layer_before_replacing_it() {
+        let page_id = PageId::new();
+        let text_id = NodeId::new();
+        let old_layer_id = NodeId::new();
+        let layer_blob = BlobRef::new("new-layer");
+        let mask_blob = BlobRef::new("mask");
+        let mut scene = Scene::default();
+        let mut page = koharu_core::Page::new("p1", 100, 120);
+        page.id = page_id;
+        page.nodes.insert(
+            text_id,
+            Node {
+                id: text_id,
+                transform: Transform::default(),
+                visible: true,
+                kind: NodeKind::Text(TextData {
+                    workflow: TextWorkflow {
+                        modes: vec![TextWorkflowMode::Repair],
+                        repair_layer: Some(old_layer_id),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                }),
+            },
+        );
+        page.nodes.insert(
+            old_layer_id,
+            Node {
+                id: old_layer_id,
+                transform: Transform::default(),
+                visible: true,
+                kind: NodeKind::Image(ImageData {
+                    role: ImageRole::Custom,
+                    blob: BlobRef::new("old-layer"),
+                    opacity: 1.0,
+                    natural_width: 100,
+                    natural_height: 120,
+                    name: Some("old repair".into()),
+                }),
+            },
+        );
+        scene.pages.insert(page_id, page);
+
+        let ops = build_bound_repair_layer_ops(
+            &scene,
+            page_id,
+            text_id,
+            layer_blob,
+            mask_blob,
+            100,
+            120,
+            "gpt-image-2",
+            "replace with translation",
+        )
+        .expect("build repair ops");
+
+        assert_eq!(ops.len(), 3);
+        match &ops[0] {
+            Op::RemoveNode {
+                id,
+                prev_node,
+                prev_index,
+                ..
+            } => {
+                assert_eq!(*id, old_layer_id);
+                assert_eq!(prev_node.id, old_layer_id);
+                assert_eq!(*prev_index, 1);
+            }
+            other => panic!("expected RemoveNode, got {other:?}"),
+        }
+        match &ops[1] {
+            Op::AddNode { at, .. } => assert_eq!(*at, 1),
+            other => panic!("expected AddNode, got {other:?}"),
         }
     }
 }

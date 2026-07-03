@@ -392,6 +392,7 @@
     "ocr": "OCR",
     "translator": "Traductor",
     "inpainter": "Inpainter",
+    "repairer": "Reparador",
     "renderer": "Renderizador",
     "keybinds": "Atajos de teclado",
     "keybindsDescription": "Personaliza los atajos de teclado para herramientas y acciones.",

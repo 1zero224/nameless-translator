@@ -429,6 +429,7 @@
     "ocr": "OCR",
     "translator": "Translator",
     "inpainter": "Inpainter",
+    "repairer": "Repairer",
     "renderer": "Renderer",
     "keybinds": "Keybinds",
     "keybindsDescription": "Customize keyboard shortcuts for tools and actions.",

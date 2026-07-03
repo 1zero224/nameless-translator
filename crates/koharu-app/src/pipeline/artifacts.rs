@@ -4,7 +4,7 @@
 //! resolver derives execution order from these. Artifacts are satisfied when
 //! the corresponding scene node / field is present on the target page.
 
-use koharu_core::{ImageRole, MaskRole, NodeKind, Page};
+use koharu_core::{ImageRole, MaskRole, NodeKind, Page, TextWorkflowMode};
 
 /// Every named "thing" a pipeline step depends on or writes.
 ///
@@ -35,6 +35,8 @@ pub enum Artifact {
     Translations,
     /// Every `Text` node has a rendered sprite.
     RenderedSprites,
+    /// Repair-mode text nodes have bound custom repair image layers.
+    RepairLayers,
     /// `Image { role: Rendered }` node present.
     FinalRender,
 }
@@ -65,6 +67,10 @@ impl Artifact {
                 t.translation.as_ref().is_some_and(|s| !s.trim().is_empty())
             }),
             Artifact::RenderedSprites => every_text(page, |t| t.sprite.is_some()),
+            Artifact::RepairLayers => every_text(page, |t| {
+                !t.workflow.modes.contains(&TextWorkflowMode::Repair)
+                    || t.workflow.repair_layer.is_some()
+            }),
             Artifact::FinalRender => has_image_role(page, ImageRole::Rendered),
         }
     }

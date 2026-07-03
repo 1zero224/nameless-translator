@@ -9,12 +9,13 @@
  * Empty string means use default.
  */
 export interface PipelineConfig {
-  bubble_segmenter?: string;
-  detector?: string;
-  font_detector?: string;
-  inpainter?: string;
-  ocr?: string;
-  renderer?: string;
-  segmenter?: string;
-  translator?: string;
+  bubble_segmenter?: string
+  detector?: string
+  font_detector?: string
+  inpainter?: string
+  ocr?: string
+  renderer?: string
+  repairer?: string
+  segmenter?: string
+  translator?: string
 }

@@ -392,6 +392,7 @@
     "ocr": "OCR",
     "translator": "Çevirici",
     "inpainter": "İnpaint Motoru",
+    "repairer": "Onarım motoru",
     "renderer": "Render Motoru",
     "keybinds": "Tuş Atamaları",
     "keybindsDescription": "Araçlar ve eylemler için klavye kısa yollarını özelleştirin.",

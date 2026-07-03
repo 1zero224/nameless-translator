@@ -7,7 +7,7 @@ use koharu_secrets::SecretStore;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use utoipa::ToSchema;
 
-use crate::pipeline::{Artifact, Registry, resolve_inpainter_alias};
+use crate::pipeline::{Artifact, Registry, resolve_inpainter_alias, resolve_repairer_alias};
 
 const CONFIG_FILE: &str = "config.toml";
 const REDACTED: &str = "[REDACTED]";
@@ -78,6 +78,7 @@ pub struct PipelineConfig {
     pub ocr: String,
     pub translator: String,
     pub inpainter: String,
+    pub repairer: String,
     pub renderer: String,
 }
 
@@ -91,6 +92,7 @@ impl Default for PipelineConfig {
             ocr: "paddle-ocr-vl-1.6".to_string(),
             translator: "llm".to_string(),
             inpainter: "lama-manga".to_string(),
+            repairer: "gpt-image-2-repair".to_string(),
             renderer: "koharu-renderer".to_string(),
         }
     }
@@ -233,6 +235,9 @@ pub fn apply_patch(config: &mut AppConfig, patch: koharu_core::ConfigPatch) {
         if let Some(v) = p.inpainter {
             config.pipeline.inpainter = resolve_inpainter_alias(&v).into_owned();
         }
+        if let Some(v) = p.repairer {
+            config.pipeline.repairer = resolve_repairer_alias(&v).into_owned();
+        }
         if let Some(v) = p.renderer {
             config.pipeline.renderer = v;
         }
@@ -309,6 +314,12 @@ fn validate_pipeline_config(config: &mut AppConfig) -> bool {
         Artifact::Inpainted,
     );
     changed |= validate_engine_name(
+        "repairer",
+        &mut config.pipeline.repairer,
+        &defaults.repairer,
+        Artifact::RepairLayers,
+    );
+    changed |= validate_engine_name(
         "renderer",
         &mut config.pipeline.renderer,
         &defaults.renderer,
@@ -319,12 +330,28 @@ fn validate_pipeline_config(config: &mut AppConfig) -> bool {
 }
 
 fn normalize_pipeline_aliases(config: &mut AppConfig) -> bool {
-    let canonical = resolve_inpainter_alias(&config.pipeline.inpainter);
-    if canonical.as_ref() == config.pipeline.inpainter {
-        return false;
+    let mut changed = false;
+
+    let repairer_from_inpainter = resolve_repairer_alias(&config.pipeline.inpainter);
+    if repairer_from_inpainter.as_ref() != config.pipeline.inpainter {
+        config.pipeline.repairer = repairer_from_inpainter.into_owned();
+        config.pipeline.inpainter = PipelineConfig::default().inpainter;
+        changed = true;
+    } else {
+        let canonical = resolve_inpainter_alias(&config.pipeline.inpainter);
+        if canonical.as_ref() != config.pipeline.inpainter {
+            config.pipeline.inpainter = canonical.into_owned();
+            changed = true;
+        }
     }
-    config.pipeline.inpainter = canonical.into_owned();
-    true
+
+    let canonical = resolve_repairer_alias(&config.pipeline.repairer);
+    if canonical.as_ref() != config.pipeline.repairer {
+        config.pipeline.repairer = canonical.into_owned();
+        changed = true;
+    }
+
+    changed
 }
 
 fn validate_engine_name(
@@ -491,5 +518,35 @@ mod tests {
         );
 
         assert_eq!(config.pipeline.inpainter, "aot-inpainting");
+    }
+
+    #[test]
+    fn apply_patch_normalizes_gpt_image_repairer_aliases() {
+        let mut config = AppConfig::default();
+        apply_patch(
+            &mut config,
+            ConfigPatch {
+                pipeline: Some(PipelineConfigPatch {
+                    repairer: Some("gpt_image2_masked_edit".to_string()),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+        );
+
+        assert_eq!(config.pipeline.repairer, "gpt-image-2-repair");
+        assert_eq!(config.pipeline.inpainter, "lama-manga");
+    }
+
+    #[test]
+    fn validate_pipeline_config_migrates_gpt_image_from_inpainter_to_repairer() {
+        let mut config = AppConfig::default();
+        config.pipeline.inpainter = "gpt-image-2".to_string();
+
+        let changed = validate_pipeline_config(&mut config);
+
+        assert!(changed);
+        assert_eq!(config.pipeline.inpainter, "lama-manga");
+        assert_eq!(config.pipeline.repairer, "gpt-image-2-repair");
     }
 }

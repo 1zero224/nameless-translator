@@ -5,14 +5,17 @@ use anyhow::{Context, Result, anyhow};
 use async_trait::async_trait;
 use base64::Engine as _;
 use image::{DynamicImage, GenericImageView, ImageFormat};
-use koharu_core::{BlobRef, NodeId, Op, RepairWorkflowTrace, TextData, Transform, WorkflowStatus};
+use koharu_core::{
+    BlobRef, NodeId, Op, RepairWorkflowTrace, Scene, TextData, Transform, WorkflowStatus,
+};
 use serde::Deserialize;
 
 use crate::pipeline::artifacts::Artifact;
 use crate::pipeline::engine::{Engine, EngineCtx, EngineInfo};
 use crate::pipeline::engines::support::{
     build_bound_repair_layer_ops, load_source_image, openai_edit_mask_for_transform,
-    repair_layer_image_from_edit_output, repair_text_nodes, update_text_workflow_op,
+    remove_bound_repair_layer_op, repair_layer_image_from_edit_output, repair_text_nodes,
+    update_text_workflow_op,
 };
 
 const DEFAULT_BASE_URL: &str = "https://api.openai.com/v1";
@@ -42,11 +45,26 @@ impl Engine for Model {
                 continue;
             }
 
+            let prompt = match repair_prompt(text, transform) {
+                Ok(prompt) => prompt,
+                Err(error) => {
+                    ops.extend(repair_failure_ops(
+                        ctx.scene,
+                        ctx.page,
+                        node_id,
+                        text,
+                        &self.client.config.model,
+                        "",
+                        None,
+                        &error.to_string(),
+                    ));
+                    continue;
+                }
+            };
             let mask = openai_edit_mask_for_transform(source_width, source_height, transform);
             let mask_image = DynamicImage::ImageRgba8(mask.clone());
             let mask_png = encode_png(&mask_image)?;
             let mask_blob = ctx.blobs.put_bytes(&mask_png)?;
-            let prompt = repair_prompt(text, transform);
             let result = run_one_repair(
                 &self.client,
                 &source_png,
@@ -70,7 +88,8 @@ impl Engine for Model {
                         &prompt,
                     )?);
                 }
-                Err(error) => ops.push(repair_failure_op(
+                Err(error) => ops.extend(repair_failure_ops(
+                    ctx.scene,
                     ctx.page,
                     node_id,
                     text,
@@ -116,6 +135,7 @@ fn repair_failure_op(
 ) -> Op {
     let mut workflow = text.workflow.clone();
     workflow.repair_status = WorkflowStatus::Failed;
+    workflow.repair_layer = None;
     workflow.repair_trace = Some(RepairWorkflowTrace {
         model: Some(model.to_string()),
         prompt: Some(prompt.to_string()),
@@ -123,6 +143,26 @@ fn repair_failure_op(
         error: Some(error.to_string()),
     });
     update_text_workflow_op(page, node_id, workflow)
+}
+
+fn repair_failure_ops(
+    scene: &Scene,
+    page: koharu_core::PageId,
+    node_id: NodeId,
+    text: &TextData,
+    model: &str,
+    prompt: &str,
+    mask_blob: Option<BlobRef>,
+    error: &str,
+) -> Vec<Op> {
+    let mut ops = Vec::with_capacity(2);
+    if let Some((remove_op, _)) = remove_bound_repair_layer_op(scene, page, text) {
+        ops.push(remove_op);
+    }
+    ops.push(repair_failure_op(
+        page, node_id, text, model, prompt, mask_blob, error,
+    ));
+    ops
 }
 
 fn encode_png(image: &DynamicImage) -> Result<Vec<u8>> {
@@ -236,14 +276,17 @@ fn image_size_param(width: u32, height: u32) -> String {
     format!("{width}x{height}")
 }
 
-fn repair_prompt(text: &TextData, transform: &Transform) -> String {
+fn repair_prompt(text: &TextData, transform: &Transform) -> Result<String> {
     let original = text.text.as_deref().unwrap_or("").trim();
     let translation = text.translation.as_deref().unwrap_or("").trim();
+    if translation.is_empty() {
+        anyhow::bail!("translation is required for GPT image repair");
+    }
     let font_size = text
         .detected_font_size_px
         .map(|v| format!("{v:.1}px"))
         .unwrap_or_else(|| "unknown".to_string());
-    format!(
+    Ok(format!(
         "Replace only the masked original manga text with the translation. \
          Preserve the local artwork, screentones, speech bubble edges, original lettering style, \
          approximate font weight, font size, and rotation. Original Japanese text: {original}. \
@@ -251,7 +294,7 @@ fn repair_prompt(text: &TextData, transform: &Transform) -> String {
          rotation={:.1} degrees, detected font size={font_size}. \
          Do not modify pixels outside the transparent mask.",
         transform.x, transform.y, transform.width, transform.height, transform.rotation_deg
-    )
+    ))
 }
 
 #[derive(Deserialize)]
@@ -282,8 +325,8 @@ inventory::submit! {
     EngineInfo {
         id: "gpt-image-2-repair",
         name: "GPT Image 2 Repair",
-        needs: &[Artifact::SourceImage, Artifact::TextBoxes],
-        produces: &[Artifact::Inpainted],
+        needs: &[Artifact::SourceImage, Artifact::TextBoxes, Artifact::Translations],
+        produces: &[Artifact::RepairLayers],
         load: |runtime, _cpu| Box::pin(async move {
             let _ = runtime;
             let config = GptImageRepairConfig::from_env_or_config()?;
@@ -300,7 +343,10 @@ inventory::submit! {
 #[cfg(test)]
 mod tests {
     use image::{DynamicImage, Rgba, RgbaImage};
-    use koharu_core::{TextData, Transform};
+    use koharu_core::{
+        BlobRef, ImageData, ImageRole, Node, NodeDataPatch, NodeId, NodeKind, Op, PageId, Scene,
+        TextData, TextWorkflow, Transform, WorkflowStatus,
+    };
 
     #[test]
     fn repair_prompt_includes_original_translation_and_geometry() {
@@ -319,12 +365,27 @@ mod tests {
                 height: 44.0,
                 rotation_deg: 12.0,
             },
-        );
+        )
+        .expect("prompt");
 
         assert!(prompt.contains("こんにちは"));
         assert!(prompt.contains("hello"));
         assert!(prompt.contains("12"));
         assert!(prompt.contains("28"));
+    }
+
+    #[test]
+    fn repair_prompt_rejects_empty_translation() {
+        let text = TextData {
+            text: Some("こんにちは".to_string()),
+            translation: Some("  ".to_string()),
+            ..Default::default()
+        };
+
+        let error =
+            super::repair_prompt(&text, &Transform::default()).expect_err("missing translation");
+
+        assert!(error.to_string().contains("translation"));
     }
 
     #[test]
@@ -357,16 +418,138 @@ mod tests {
     }
 
     #[test]
-    fn registers_engine_as_inpaint_provider() {
+    fn registers_engine_requires_translations() {
         let info = crate::pipeline::Registry::find("gpt-image-2-repair").expect("engine info");
 
         assert_eq!(info.name, "GPT Image 2 Repair");
         assert!(info.needs.contains(&crate::pipeline::Artifact::SourceImage));
         assert!(info.needs.contains(&crate::pipeline::Artifact::TextBoxes));
         assert!(
+            info.needs
+                .contains(&crate::pipeline::Artifact::Translations)
+        );
+        assert!(
             info.produces
+                .contains(&crate::pipeline::Artifact::RepairLayers)
+        );
+        assert!(
+            !info
+                .produces
                 .contains(&crate::pipeline::Artifact::Inpainted)
         );
+    }
+
+    #[test]
+    fn repair_failure_op_clears_stale_repair_layer_binding() {
+        let page_id = PageId::new();
+        let text_id = NodeId::new();
+        let old_layer_id = NodeId::new();
+        let text = TextData {
+            workflow: TextWorkflow {
+                repair_layer: Some(old_layer_id),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let op = super::repair_failure_op(
+            page_id,
+            text_id,
+            &text,
+            "gpt-image-2",
+            "prompt",
+            None,
+            "missing translation",
+        );
+
+        match op {
+            Op::UpdateNode { id, patch, .. } => {
+                assert_eq!(id, text_id);
+                let Some(NodeDataPatch::Text(text_patch)) = patch.data else {
+                    panic!("expected text workflow patch");
+                };
+                let workflow = text_patch.workflow.expect("workflow patch");
+                assert_eq!(workflow.repair_status, WorkflowStatus::Failed);
+                assert_eq!(workflow.repair_layer, None);
+            }
+            other => panic!("expected UpdateNode, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn repair_failure_ops_removes_stale_bound_layer() {
+        let page_id = PageId::new();
+        let text_id = NodeId::new();
+        let old_layer_id = NodeId::new();
+        let mut scene = Scene::default();
+        let mut page = koharu_core::Page::new("p1", 100, 100);
+        page.id = page_id;
+        page.nodes.insert(
+            text_id,
+            Node {
+                id: text_id,
+                transform: Transform::default(),
+                visible: true,
+                kind: NodeKind::Text(TextData {
+                    workflow: TextWorkflow {
+                        repair_layer: Some(old_layer_id),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                }),
+            },
+        );
+        page.nodes.insert(
+            old_layer_id,
+            Node {
+                id: old_layer_id,
+                transform: Transform::default(),
+                visible: true,
+                kind: NodeKind::Image(ImageData {
+                    role: ImageRole::Custom,
+                    blob: BlobRef::new("old-layer"),
+                    opacity: 1.0,
+                    natural_width: 100,
+                    natural_height: 100,
+                    name: Some("old repair".into()),
+                }),
+            },
+        );
+        let text = match &page.nodes.get(&text_id).expect("text").kind {
+            NodeKind::Text(text) => text.clone(),
+            other => panic!("expected text node, got {other:?}"),
+        };
+        scene.pages.insert(page_id, page);
+
+        let ops = super::repair_failure_ops(
+            &scene,
+            page_id,
+            text_id,
+            &text,
+            "gpt-image-2",
+            "",
+            None,
+            "missing translation",
+        );
+
+        assert_eq!(ops.len(), 2);
+        match &ops[0] {
+            Op::RemoveNode { id, .. } => assert_eq!(id, &old_layer_id),
+            other => panic!("expected RemoveNode, got {other:?}"),
+        }
+        match &ops[1] {
+            Op::UpdateNode { id, patch, .. } => {
+                assert_eq!(id, &text_id);
+                let Some(NodeDataPatch::Text(text_patch)) = &patch.data else {
+                    panic!("expected text workflow patch");
+                };
+                assert_eq!(
+                    text_patch.workflow.as_ref().expect("workflow").repair_layer,
+                    None
+                );
+            }
+            other => panic!("expected UpdateNode, got {other:?}"),
+        }
     }
 
     #[tokio::test]

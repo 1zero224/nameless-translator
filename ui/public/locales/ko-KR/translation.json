@@ -418,6 +418,7 @@
     "ocr": "OCR",
     "translator": "번역기",
     "inpainter": "인페인터",
+    "repairer": "복구 엔진",
     "renderer": "렌더러",
     "keybinds": "단축키",
     "keybindsDescription": "도구 및 작업에 대한 키보드 단축키를 사용자 정의합니다.",

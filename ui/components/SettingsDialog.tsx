@@ -114,6 +114,7 @@ function appConfigToPatch(cfg: AppConfig): ConfigPatch {
       ocr: cfg.pipeline.ocr,
       translator: cfg.pipeline.translator,
       inpainter: cfg.pipeline.inpainter,
+      repairer: cfg.pipeline.repairer,
       renderer: cfg.pipeline.renderer,
     }
   }
@@ -536,6 +537,11 @@ function EnginesPane({
       label: t('settings.inpainter'),
       key: 'inpainter' as const,
       engines: catalog.inpainters,
+    },
+    {
+      label: t('settings.repairer'),
+      key: 'repairer' as const,
+      engines: catalog.repairers ?? [],
     },
     {
       label: t('settings.renderer'),

@@ -16,7 +16,7 @@ pub use engine::{
     build_order,
 };
 pub use engines::support;
-pub use inpaint_compat::resolve_inpainter_alias;
+pub use inpaint_compat::{resolve_inpainter_alias, resolve_repairer_alias};
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -76,7 +76,7 @@ fn step_for(info: &EngineInfo) -> Option<PipelineStep> {
         | Artifact::BubbleMask => Some(PipelineStep::Detect),
         Artifact::OcrText => Some(PipelineStep::Ocr),
         Artifact::Translations => Some(PipelineStep::LlmGenerate),
-        Artifact::Inpainted => Some(PipelineStep::Inpaint),
+        Artifact::Inpainted | Artifact::RepairLayers => Some(PipelineStep::Inpaint),
         Artifact::FinalRender => Some(PipelineStep::Render),
         // Non-UI-facing artifacts (inputs, intermediate sprites) — no
         // toolbar step tag.
@@ -347,6 +347,10 @@ pub fn catalog() -> EngineCatalog {
             .iter()
             .map(entry)
             .collect(),
+        repairers: Registry::providers(Artifact::RepairLayers)
+            .iter()
+            .map(entry)
+            .collect(),
         renderers: Registry::providers(Artifact::FinalRender)
             .iter()
             .map(entry)
@@ -367,5 +371,23 @@ mod tests {
                 && engine.name == "Anime Text YOLO (N)"
                 && engine.produces.iter().map(String::as_str).eq(["TextBoxes"])
         }));
+    }
+
+    #[test]
+    fn catalog_exposes_gpt_image_as_repairer_not_inpainter() {
+        let catalog = catalog();
+
+        assert!(
+            catalog
+                .repairers
+                .iter()
+                .any(|engine| engine.id == "gpt-image-2-repair")
+        );
+        assert!(
+            !catalog
+                .inpainters
+                .iter()
+                .any(|engine| engine.id == "gpt-image-2-repair")
+        );
     }
 }
