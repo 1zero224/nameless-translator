@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
-import { buildAutomationSteps } from '@/lib/automationPipeline'
 import type { PipelineConfig, Scene } from '@/lib/api/schemas'
+import { buildAutomationPlan, buildAutomationSteps } from '@/lib/automationPipeline'
 
 const pipeline = {
   font_detector: 'font-detector',
@@ -66,5 +66,27 @@ describe('buildAutomationSteps', () => {
       'gpt-image-2-repair',
       'koharu-renderer',
     ])
+  })
+
+  it('summarizes project automation scope and missing engines', () => {
+    const plan = buildAutomationPlan(
+      {
+        font_detector: 'font-detector',
+        inpainter: 'lama-manga',
+        renderer: '',
+        repairer: undefined,
+      } as PipelineConfig,
+      sceneWithTextModes(['lettering', 'repair', 'lettering+repair']),
+    )
+
+    expect(plan.counts).toEqual({
+      textBlocks: 3,
+      letteringBlocks: 2,
+      repairBlocks: 2,
+      dualModeBlocks: 1,
+    })
+    expect(plan.steps).toEqual(['font-detector', 'lama-manga'])
+    expect(plan.missingEngines).toEqual(['repairer', 'renderer'])
+    expect(plan.canRun).toBe(false)
   })
 })

@@ -3,9 +3,11 @@
 import {
   BotIcon,
   LanguagesIcon,
+  ListChecksIcon,
   LoaderCircleIcon,
   ScanIcon,
   ScanTextIcon,
+  TriangleAlertIcon,
   TypeIcon,
   Wand2Icon,
 } from 'lucide-react'
@@ -32,10 +34,15 @@ import {
   putCurrentLlm,
   startPipeline,
   useGetCatalog,
+  useGetConfig,
   useGetCurrentLlm,
 } from '@/lib/api/default/default'
 import type { LlmCatalog, LlmCatalogModel, LlmProviderCatalog, LlmTarget } from '@/lib/api/schemas'
-import { buildAutomationSteps } from '@/lib/automationPipeline'
+import {
+  buildAutomationPlan,
+  buildAutomationSteps,
+  type AutomationPlan,
+} from '@/lib/automationPipeline'
 import { useEditorUiStore } from '@/lib/stores/editorUiStore'
 import { useJobsStore } from '@/lib/stores/jobsStore'
 import { usePreferencesStore } from '@/lib/stores/preferencesStore'
@@ -98,6 +105,7 @@ function useIsProcessing(): boolean {
 function WorkflowButtons() {
   const { t } = useTranslation()
   const { data: llmState } = useGetCurrentLlm()
+  const { data: config } = useGetConfig()
   const llmReady = llmState?.status === 'ready'
   const { scene } = useScene()
   const pageId = useSelectionStore((s) => s.pageId)
@@ -105,6 +113,10 @@ function WorkflowButtons() {
   const hasProject = scene !== null
   const isProcessing = useIsProcessing()
   const currentStep = useCurrentStep()
+  const automationPlan = useMemo(
+    () => buildAutomationPlan(config?.pipeline ?? {}, scene),
+    [config?.pipeline, scene],
+  )
 
   /**
    * Run a pipeline step (or a small chain). `GET /config` is the single
@@ -151,9 +163,7 @@ function WorkflowButtons() {
   const translateChain: PipelinePick = (p) => [p.translator!]
   const inpaintChain: PipelinePick = (p) => [p.inpainter!]
   const renderChain: PipelinePick = (p) => [p.renderer!]
-  const automationChain: PipelinePick = (p) => [
-    ...buildAutomationSteps(p, scene),
-  ]
+  const automationChain: PipelinePick = (p) => [...buildAutomationSteps(p, scene)]
 
   const isDetecting = currentStep === 'detect'
   const isOcr = currentStep === 'ocr'
@@ -168,7 +178,7 @@ function WorkflowButtons() {
         size='xs'
         onClick={() => void runStepForProject(automationChain)}
         data-testid='toolbar-automation'
-        disabled={!hasProject || isProcessing}
+        disabled={!hasProject || isProcessing || !automationPlan.canRun}
       >
         {isProcessing ? (
           <LoaderCircleIcon className='size-4 animate-spin' />
@@ -177,6 +187,7 @@ function WorkflowButtons() {
         )}
         启动自动化工作流
       </Button>
+      <AutomationPlanPopover plan={automationPlan} />
       <Separator orientation='vertical' className='mx-0.5 h-4' />
       <Button
         variant='ghost'
@@ -270,6 +281,73 @@ function WorkflowButtons() {
       readingOrder: editor.readingOrder === 'custom' ? undefined : editor.readingOrder,
     })
   }
+}
+
+function AutomationPlanPopover({ plan }: { plan: AutomationPlan }) {
+  const missing = plan.missingEngines.length > 0
+  const empty = plan.counts.textBlocks === 0
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <Button
+          type='button'
+          variant={missing ? 'outline' : 'ghost'}
+          size='xs'
+          data-testid='toolbar-automation-plan'
+          className={missing ? 'border-amber-300 text-amber-700 dark:text-amber-300' : undefined}
+          title='自动化计划'
+        >
+          {missing ? (
+            <TriangleAlertIcon className='size-3.5' />
+          ) : (
+            <ListChecksIcon className='size-3.5' />
+          )}
+          {plan.counts.textBlocks}块
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent
+        align='start'
+        className='w-64 p-0 text-xs'
+        data-testid='automation-plan-popover'
+      >
+        <div className='flex flex-col gap-2 p-3'>
+          <div className='flex items-center justify-between gap-2'>
+            <span className='font-semibold text-foreground'>自动化计划</span>
+            <span className='rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground'>
+              {plan.canRun ? '可执行' : '需配置'}
+            </span>
+          </div>
+          <div className='grid grid-cols-2 gap-1.5'>
+            <PlanStat label={`${plan.counts.textBlocks} 个文本块`} />
+            <PlanStat label={`嵌字 ${plan.counts.letteringBlocks}`} />
+            <PlanStat label={`修图 ${plan.counts.repairBlocks}`} />
+            <PlanStat label={`双模式 ${plan.counts.dualModeBlocks}`} />
+          </div>
+          {missing ? (
+            <div className='rounded-md border border-amber-300/70 bg-amber-50 px-2 py-1.5 text-amber-800 dark:bg-amber-950/30 dark:text-amber-200'>
+              缺少 {plan.missingEngines.join(' / ')}
+            </div>
+          ) : empty ? (
+            <div className='rounded-md border border-border bg-muted/50 px-2 py-1.5 text-muted-foreground'>
+              当前项目还没有可处理的文本块
+            </div>
+          ) : (
+            <div className='rounded-md border border-border bg-muted/50 px-2 py-1.5 text-muted-foreground'>
+              步骤 {plan.steps.join(' -> ')}
+            </div>
+          )}
+        </div>
+      </PopoverContent>
+    </Popover>
+  )
+}
+
+function PlanStat({ label }: { label: string }) {
+  return (
+    <span className='rounded-md border border-border bg-muted/40 px-2 py-1 text-muted-foreground'>
+      {label}
+    </span>
+  )
 }
 
 function LlmStatusPopover() {
