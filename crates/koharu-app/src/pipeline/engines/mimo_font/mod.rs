@@ -136,7 +136,7 @@ inventory::submit! {
     EngineInfo {
         id: "mimo-font-selection",
         name: "MIMO Vision Font Selection",
-        needs: &[Artifact::SourceImage, Artifact::TextBoxes, Artifact::Translations],
+        needs: &[Artifact::SourceImage, Artifact::TextBoxes],
         produces: &[Artifact::FontPredictions],
         load: |runtime, cpu| Box::pin(async move {
             let detector = FontDetector::load(runtime, cpu).await?;

@@ -100,7 +100,7 @@ fn registers_mimo_font_engine_as_font_prediction_provider() {
     assert_eq!(info.name, "MIMO Vision Font Selection");
     assert!(info.needs.contains(&Artifact::SourceImage));
     assert!(info.needs.contains(&Artifact::TextBoxes));
-    assert!(info.needs.contains(&Artifact::Translations));
+    assert!(!info.needs.contains(&Artifact::Translations));
     assert!(info.produces.contains(&Artifact::FontPredictions));
 }
 
