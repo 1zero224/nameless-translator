@@ -15,6 +15,7 @@ import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { findImageBlob, findMaskBlob, useCurrentPage, useTextNodes } from '@/hooks/useCurrentPage'
 import { useScene } from '@/hooks/useScene'
+import { resolveRepairResultDisplay } from '@/lib/repairResultDisplay'
 import { useEditorUiStore } from '@/lib/stores/editorUiStore'
 import { cn } from '@/lib/utils'
 
@@ -42,12 +43,15 @@ export function LayersPanel() {
   const setShowTextBlocksOverlay = useEditorUiStore((s) => s.setShowTextBlocksOverlay)
   const showRenderedImage = useEditorUiStore((s) => s.showRenderedImage)
   const setShowRenderedImage = useEditorUiStore((s) => s.setShowRenderedImage)
+  const showRepairResultLayers = useEditorUiStore((s) => s.showRepairResultLayers)
+  const setShowRepairResultLayers = useEditorUiStore((s) => s.setShowRepairResultLayers)
 
   const hasRendered = !!(page && findImageBlob(page, 'rendered'))
   const hasInpainted = !!(page && findImageBlob(page, 'inpainted'))
   const hasSource = !!(page && findImageBlob(page, 'source'))
   const hasSegment = !!(page && findMaskBlob(page, 'segment'))
   const hasBrush = !!(page && findMaskBlob(page, 'brushInpaint'))
+  const hasRepairResult = !!(page && resolveRepairResultDisplay(page).repairLayers.length > 0)
   // Silence warning about unused epoch dep — it's the invalidation trigger.
   void sceneEpoch
 
@@ -59,6 +63,14 @@ export function LayersPanel() {
       visible: showRenderedImage,
       setVisible: setShowRenderedImage,
       hasContent: hasRendered,
+    },
+    {
+      id: 'repairResult',
+      labelKey: 'layers.repairResult',
+      icon: BandageIcon,
+      visible: showRepairResultLayers,
+      setVisible: setShowRepairResultLayers,
+      hasContent: hasRepairResult,
     },
     {
       id: 'textBlocks',

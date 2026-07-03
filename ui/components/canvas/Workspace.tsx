@@ -41,6 +41,7 @@ import { usePointerToDocument } from '@/hooks/usePointerToDocument'
 import { useRenderBrushDrawing } from '@/hooks/useRenderBrushDrawing'
 import { applyOp } from '@/lib/io/scene'
 import { ops } from '@/lib/ops'
+import { resolveRepairResultDisplay, type RepairLayerDisplay } from '@/lib/repairResultDisplay'
 import { useEditorUiStore } from '@/lib/stores/editorUiStore'
 import { useSelectionStore } from '@/lib/stores/selectionStore'
 import { createManualTextNode, type ManualBlockDraft } from '@/lib/textBlocks'
@@ -65,6 +66,7 @@ export function Workspace() {
   const showBrushLayer = useEditorUiStore((s) => s.showBrushLayer)
   const showRenderedImage = useEditorUiStore((s) => s.showRenderedImage)
   const showTextBlocksOverlay = useEditorUiStore((s) => s.showTextBlocksOverlay)
+  const showRepairResultLayers = useEditorUiStore((s) => s.showRepairResultLayers)
   const mode = useEditorUiStore((s) => s.mode)
   const autoFitEnabled = useEditorUiStore((s) => s.autoFitEnabled)
 
@@ -77,6 +79,10 @@ export function Workspace() {
   const inpaintedHash = useMemo(() => (page ? findImageBlob(page, 'inpainted') : null), [page])
   const brushLayerHash = useMemo(() => (page ? findMaskBlob(page, 'brushInpaint') : null), [page])
   const renderedHash = useMemo(() => (page ? findImageBlob(page, 'rendered') : null), [page])
+  const repairResultDisplay = useMemo(
+    () => (page ? resolveRepairResultDisplay(page) : null),
+    [page],
+  )
 
   const imageData = useBlobData(imageHash ?? undefined)
   const segmentData = useBlobData(segmentHash ?? undefined)
@@ -406,6 +412,7 @@ export function Workspace() {
                         {showTextBlocksOverlay && (
                           <TextBlockLayer
                             showSprites={!showRenderedImage}
+                            hiddenSpriteNodeIds={repairResultDisplay?.repairTextNodeIds}
                             scale={scaleRatio}
                             style={{ zIndex: 30 }}
                           />
@@ -418,6 +425,10 @@ export function Workspace() {
                             style={{ zIndex: 40 }}
                           />
                         )}
+                        {showRepairResultLayers &&
+                          repairResultDisplay?.repairLayers.map((layer) => (
+                            <RepairLayerImage key={layer.id} layer={layer} />
+                          ))}
                       </div>
                       {draftBlock && (
                         <div
@@ -464,6 +475,20 @@ export function Workspace() {
         </ScrollAreaPrimitive.Root>
       </div>
     </div>
+  )
+}
+
+function RepairLayerImage({ layer }: { layer: RepairLayerDisplay }) {
+  const data = useBlobData(layer.blob)
+  return (
+    <Image
+      data-testid={`workspace-repair-layer-${layer.id}`}
+      data={data}
+      dataKey={layer.blob}
+      opacity={layer.opacity}
+      transition={true}
+      style={{ zIndex: 45 }}
+    />
   )
 }
 

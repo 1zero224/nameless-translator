@@ -97,6 +97,7 @@
   "layers": {
     "title": "Слои",
     "rendered": "Отрендеренный текст",
+    "repairResult": "Результат ретуши",
     "textBlocks": "Текстовые блоки",
     "brush": "Слой кисти",
     "inpainted": "Инпейнтинг",

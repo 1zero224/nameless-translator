@@ -97,6 +97,7 @@
   "layers": {
     "title": "Capas",
     "rendered": "Texto renderizado",
+    "repairResult": "Resultado de reparación",
     "textBlocks": "Bloques de texto",
     "brush": "Capa de pincel",
     "inpainted": "Rellenado",

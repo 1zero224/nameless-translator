@@ -97,6 +97,7 @@
   "layers": {
     "title": "Katmanlar",
     "rendered": "Render Edilmiş Metin",
+    "repairResult": "Onarım Sonucu",
     "textBlocks": "Metin Blokları",
     "brush": "Fırça Katmanı",
     "inpainted": "İnpaint",

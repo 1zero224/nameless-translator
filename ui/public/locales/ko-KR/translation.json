@@ -103,6 +103,7 @@
   "layers": {
     "title": "레이어",
     "rendered": "렌더링된 텍스트",
+    "repairResult": "복원 결과",
     "textBlocks": "텍스트 블록",
     "brush": "브러시 레이어",
     "inpainted": "인페인트 이미지",

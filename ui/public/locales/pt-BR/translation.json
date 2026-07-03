@@ -98,6 +98,7 @@
   "layers": {
     "title": "Camadas",
     "rendered": "Texto renderizado",
+    "repairResult": "Resultado de reparo",
     "textBlocks": "Blocos de texto",
     "brush": "Camada de pincel",
     "inpainted": "Inpainting",

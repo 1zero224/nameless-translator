@@ -97,6 +97,7 @@
   "layers": {
     "title": "圖層",
     "rendered": "渲染文字",
+    "repairResult": "修圖結果",
     "textBlocks": "文字框",
     "brush": "筆刷圖層",
     "inpainted": "修補影像",

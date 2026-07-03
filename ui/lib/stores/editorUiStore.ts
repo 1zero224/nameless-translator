@@ -38,11 +38,13 @@ type EditorUiState = {
   showBrushLayer: boolean
   showRenderedImage: boolean
   showTextBlocksOverlay: boolean
+  showRepairResultLayers: boolean
   setShowSegmentationMask: (show: boolean) => void
   setShowInpaintedImage: (show: boolean) => void
   setShowBrushLayer: (show: boolean) => void
   setShowRenderedImage: (show: boolean) => void
   setShowTextBlocksOverlay: (show: boolean) => void
+  setShowRepairResultLayers: (show: boolean) => void
 
   // tools
   mode: ToolMode
@@ -82,6 +84,7 @@ const initialState = {
   showBrushLayer: false,
   showRenderedImage: false,
   showTextBlocksOverlay: false,
+  showRepairResultLayers: true,
   mode: 'select' as ToolMode,
   renderEffect: { italic: false, bold: false } as RenderEffect,
   renderStroke: undefined as RenderStroke | undefined,
@@ -106,6 +109,7 @@ export const useEditorUiStore = create<EditorUiState>((set) => ({
   setShowBrushLayer: (show) => set({ showBrushLayer: show }),
   setShowRenderedImage: (show) => set({ showRenderedImage: show }),
   setShowTextBlocksOverlay: (show) => set({ showTextBlocksOverlay: show }),
+  setShowRepairResultLayers: (show) => set({ showRepairResultLayers: show }),
 
   setMode: (mode) => {
     set({ mode })

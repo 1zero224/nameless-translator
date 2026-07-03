@@ -10,8 +10,8 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use koharu_core::{
-    ImageRole, MaskRole, NodeDataPatch, NodePatch, Op, TextDataPatch, TextStyle, Transform,
-    WorkflowStatus,
+    ImageRole, MaskRole, NodeDataPatch, NodePatch, Op, TextData, TextDataPatch, TextResultMode,
+    TextStyle, Transform, WorkflowStatus,
 };
 use koharu_llm::Language;
 
@@ -53,6 +53,9 @@ impl Engine for Model {
         let inputs: Vec<RenderBlockInput> = nodes
             .iter()
             .filter_map(|(id, transform, t)| {
+                if !should_render_text_node(t) {
+                    return None;
+                }
                 let translation = t.translation.as_ref()?.trim();
                 if translation.is_empty() {
                     return None;
@@ -188,6 +191,10 @@ fn preserve_existing_style(existing: Option<TextStyle>) -> Option<Option<TextSty
     existing.map(Some)
 }
 
+fn should_render_text_node(text: &TextData) -> bool {
+    text.workflow.result_mode != TextResultMode::Repair
+}
+
 fn render_target_language_tag(value: &str) -> String {
     Language::parse(value)
         .map(|language| language.tag().to_string())
@@ -196,8 +203,8 @@ fn render_target_language_tag(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{preserve_existing_style, render_target_language_tag};
-    use koharu_core::TextStyle;
+    use super::{preserve_existing_style, render_target_language_tag, should_render_text_node};
+    use koharu_core::{TextData, TextResultMode, TextStyle, TextWorkflow, TextWorkflowMode};
 
     #[test]
     fn omits_style_patch_when_block_has_no_explicit_style() {
@@ -234,5 +241,35 @@ mod tests {
             render_target_language_tag("not-a-language"),
             "not-a-language"
         );
+    }
+
+    #[test]
+    fn skips_lettering_sprite_when_current_result_mode_is_repair() {
+        let text = TextData {
+            translation: Some("translated".to_string()),
+            workflow: TextWorkflow {
+                modes: vec![TextWorkflowMode::Lettering, TextWorkflowMode::Repair],
+                result_mode: TextResultMode::Repair,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        assert!(!should_render_text_node(&text));
+    }
+
+    #[test]
+    fn renders_lettering_sprite_when_current_result_mode_is_lettering() {
+        let text = TextData {
+            translation: Some("translated".to_string()),
+            workflow: TextWorkflow {
+                modes: vec![TextWorkflowMode::Lettering, TextWorkflowMode::Repair],
+                result_mode: TextResultMode::Lettering,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        assert!(should_render_text_node(&text));
     }
 }

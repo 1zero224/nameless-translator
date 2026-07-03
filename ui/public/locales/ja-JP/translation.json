@@ -97,6 +97,7 @@
   "layers": {
     "title": "レイヤー",
     "rendered": "レンダー済みテキスト",
+    "repairResult": "修復結果",
     "textBlocks": "テキスト枠",
     "brush": "ブラシレイヤー",
     "inpainted": "インペイント",

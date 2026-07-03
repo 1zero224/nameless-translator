@@ -15,6 +15,7 @@ import { resolveRotationDrag, type Point } from '@/lib/textBlockTransforms'
 
 type TextBlockLayerProps = {
   showSprites?: boolean
+  hiddenSpriteNodeIds?: ReadonlySet<string>
   scale: number
   style?: React.CSSProperties
 }
@@ -24,7 +25,12 @@ type TextBlockLayerProps = {
  * resizable; commits dispatch `Op::UpdateNode { transform }` through
  * `applyCommand`. Selection is driven by `selectionStore.nodeIds`.
  */
-export function TextBlockLayer({ showSprites, scale, style }: TextBlockLayerProps) {
+export function TextBlockLayer({
+  showSprites,
+  hiddenSpriteNodeIds,
+  scale,
+  style,
+}: TextBlockLayerProps) {
   const nodes = useTextNodes()
   const page = useCurrentPage()
   const selectedIds = useSelectionStore((s) => s.nodeIds)
@@ -89,7 +95,9 @@ export function TextBlockLayer({ showSprites, scale, style }: TextBlockLayerProp
       }}
     >
       {showSprites &&
-        nodes.map((n, i) => <BlockSprite key={`sprite-${n.id ?? i}`} node={n} scale={scale} />)}
+        nodes
+          .filter((n) => !hiddenSpriteNodeIds?.has(n.id))
+          .map((n, i) => <BlockSprite key={`sprite-${n.id ?? i}`} node={n} scale={scale} />)}
       {nodes.map((n, i) => (
         <TextBlockItem
           key={n.id}

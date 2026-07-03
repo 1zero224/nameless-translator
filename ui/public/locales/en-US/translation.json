@@ -114,6 +114,7 @@
   "layers": {
     "title": "Layers",
     "rendered": "Rendered Text",
+    "repairResult": "Repair Result",
     "textBlocks": "Text Blocks",
     "brush": "Brush Layer",
     "inpainted": "Inpainted",
