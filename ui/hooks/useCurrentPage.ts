@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo } from 'react'
+import { useEffect, useMemo } from 'react'
 
 import type { ImageRole, MaskRole, Node, Page, TextData, Transform } from '@/lib/api/schemas'
 import { useSelectionStore } from '@/lib/stores/selectionStore'
@@ -90,9 +90,20 @@ export function textNodesOf(page: Page): TextNodeEntry[] {
 /** The active page, or `null` if none selected / no project open. */
 export function useCurrentPage(): Page | null {
   const pageId = useSelectionStore((s) => s.pageId)
+  const setPage = useSelectionStore((s) => s.setPage)
   const { scene } = useScene()
-  if (!pageId) return null
-  return scene?.pages?.[pageId] ?? null
+  const pages = scene?.pages
+  const fallbackPageId = useMemo(() => {
+    if (!pages) return null
+    return Object.keys(pages)[0] ?? null
+  }, [pages])
+  const activePageId = pageId && pages?.[pageId] ? pageId : fallbackPageId
+
+  useEffect(() => {
+    if (activePageId && activePageId !== pageId) setPage(activePageId)
+  }, [activePageId, pageId, setPage])
+
+  return activePageId && pages ? (pages[activePageId] ?? null) : null
 }
 
 /** Text nodes on the active page, in stacking order. */

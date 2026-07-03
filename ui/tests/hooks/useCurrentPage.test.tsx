@@ -82,6 +82,16 @@ function sceneResponse(): SceneSnapshot {
   }
 }
 
+function emptySceneResponse(): SceneSnapshot {
+  return {
+    epoch: 1,
+    scene: {
+      pages: {},
+      project: { name: 'Proj' } as never,
+    } as never,
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Pure helpers
 // ---------------------------------------------------------------------------
@@ -133,13 +143,24 @@ describe('textNodesOf', () => {
 // ---------------------------------------------------------------------------
 
 describe('useCurrentPage', () => {
-  it('returns null when no page selected', () => {
+  it('returns null when no page selected and the scene has no pages', async () => {
+    server.use(http.get('/api/v1/scene.json', () => HttpResponse.json(emptySceneResponse())))
     useSelectionStore.getState().setPage(null)
     const client = makeQueryClient()
     const { result } = renderHook(() => useCurrentPage(), {
       wrapper: withQueryClient(client),
     })
-    expect(result.current).toBeNull()
+    await waitFor(() => expect(result.current).toBeNull())
+  })
+
+  it('uses the first scene page when no page is selected', async () => {
+    server.use(http.get('/api/v1/scene.json', () => HttpResponse.json(sceneResponse())))
+    useSelectionStore.getState().setPage(null)
+    const client = makeQueryClient()
+    const { result } = renderHook(() => useCurrentPage(), {
+      wrapper: withQueryClient(client),
+    })
+    await waitFor(() => expect(result.current?.id).toBe('p-1'))
   })
 
   it('returns the page matching selection', async () => {
