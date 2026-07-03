@@ -35,6 +35,7 @@ import {
   useGetCurrentLlm,
 } from '@/lib/api/default/default'
 import type { LlmCatalog, LlmCatalogModel, LlmProviderCatalog, LlmTarget } from '@/lib/api/schemas'
+import { buildAutomationSteps } from '@/lib/automationPipeline'
 import { useEditorUiStore } from '@/lib/stores/editorUiStore'
 import { useJobsStore } from '@/lib/stores/jobsStore'
 import { usePreferencesStore } from '@/lib/stores/preferencesStore'
@@ -114,8 +115,8 @@ function WorkflowButtons() {
    * Detect is the only multi-engine button; it bundles detector +
    * segmenter + font-detector so the subsequent single-engine steps
    * (OCR / Inpaint / Render) find their inputs already on the page. The
-   * backend driver skips any step whose artifact is already satisfied,
-   * so re-running is idempotent.
+   * Project automation narrows its step list from text-block workflow modes
+   * before dispatch so repair-only pages do not run lettering cleanup steps.
    */
   const runStep = async (
     pick: (p: NonNullable<Awaited<ReturnType<typeof getConfig>>['pipeline']>) => string[],
@@ -151,10 +152,7 @@ function WorkflowButtons() {
   const inpaintChain: PipelinePick = (p) => [p.inpainter!]
   const renderChain: PipelinePick = (p) => [p.renderer!]
   const automationChain: PipelinePick = (p) => [
-    p.font_detector!,
-    p.inpainter!,
-    p.repairer!,
-    p.renderer!,
+    ...buildAutomationSteps(p, scene),
   ]
 
   const isDetecting = currentStep === 'detect'

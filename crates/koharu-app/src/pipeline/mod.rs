@@ -18,6 +18,7 @@ pub use engine::{
 pub use engines::support;
 pub use inpaint_compat::{resolve_inpainter_alias, resolve_repairer_alias};
 
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -30,9 +31,8 @@ use tracing::Instrument;
 /// about to run (or just finished); step_index / page_index are 0-based.
 pub type ProgressSink = Arc<dyn Fn(ProgressTick) + Send + Sync>;
 
-/// Observer for non-fatal step failures. Called once per failed step; the
-/// pipeline skips the rest of that page's steps and moves on to the next
-/// page.
+/// Observer for non-fatal step failures. Called once per failed step. The
+/// pipeline skips only later steps that need the failed step's artifacts.
 pub type WarningSink = Arc<dyn Fn(WarningTick) + Send + Sync>;
 
 #[derive(Debug, Clone)]
@@ -112,11 +112,11 @@ pub enum Scope {
 /// Execute `spec` against `session`. Each engine step becomes one `Op::Batch`
 /// applied via the session's history (one undo step per step per page).
 ///
-/// A failed step on a given page is non-fatal: the rest of that page's steps
-/// are skipped (they typically depend on the failed step's output), one
-/// [`WarningTick`] is emitted via `warnings`, and the driver moves on to the
-/// next page. The function returns the total number of per-step warnings
-/// that fired, letting callers flag the run as `CompletedWithErrors`.
+/// A failed step on a given page is non-fatal: one [`WarningTick`] is emitted
+/// via `warnings`, and later steps continue unless they depend on an artifact
+/// produced by the failed step. The function returns the total number of
+/// per-step warnings that fired, letting callers flag the run as
+/// `CompletedWithErrors`.
 #[allow(clippy::too_many_arguments)]
 #[tracing::instrument(level = "info", skip_all)]
 pub async fn run(
@@ -156,6 +156,7 @@ pub async fn run(
     let mut warning_count: usize = 0;
 
     'pages: for (page_index, page_id) in pages.iter().enumerate() {
+        let mut failed_artifacts = HashSet::new();
         for (seq, &i) in order.iter().enumerate() {
             if cancel.load(Ordering::Relaxed) {
                 bail!("cancelled");
@@ -183,6 +184,12 @@ pub async fn run(
                 continue 'pages;
             }
 
+            if step_blocked_by_failed_artifacts(info.needs, &failed_artifacts) {
+                record_failed_step_outputs(info.produces, &mut failed_artifacts);
+                completed += 1;
+                continue;
+            }
+
             let engine = match registry.get(info.id, &runtime, cpu).await {
                 Ok(e) => e,
                 Err(err) => {
@@ -198,8 +205,9 @@ pub async fn run(
                         &mut warning_count,
                         warnings.as_ref(),
                     );
-                    completed += (total_steps - seq) as u64;
-                    continue 'pages;
+                    record_failed_step_outputs(info.produces, &mut failed_artifacts);
+                    completed += 1;
+                    continue;
                 }
             };
             let scene_snap = session.scene_snapshot();
@@ -230,10 +238,9 @@ pub async fn run(
                         &mut warning_count,
                         warnings.as_ref(),
                     );
-                    // Subsequent steps on this page almost always consume the
-                    // failed step's artifact; skip the rest and move on.
-                    completed += (total_steps - seq) as u64;
-                    continue 'pages;
+                    record_failed_step_outputs(info.produces, &mut failed_artifacts);
+                    completed += 1;
+                    continue;
                 }
             };
             completed += 1;
@@ -256,7 +263,8 @@ pub async fn run(
                     &mut warning_count,
                     warnings.as_ref(),
                 );
-                continue 'pages;
+                record_failed_step_outputs(info.produces, &mut failed_artifacts);
+                continue;
             }
         }
     }
@@ -273,6 +281,19 @@ pub async fn run(
         });
     }
     Ok(RunOutcome { warning_count })
+}
+
+fn step_blocked_by_failed_artifacts(
+    needs: &[Artifact],
+    failed_artifacts: &HashSet<Artifact>,
+) -> bool {
+    needs
+        .iter()
+        .any(|artifact| failed_artifacts.contains(artifact))
+}
+
+fn record_failed_step_outputs(produces: &[Artifact], failed_artifacts: &mut HashSet<Artifact>) {
+    failed_artifacts.extend(produces.iter().copied());
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -361,6 +382,7 @@ pub fn catalog() -> EngineCatalog {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashSet;
 
     #[test]
     fn catalog_includes_anime_text_detector() {
@@ -389,5 +411,33 @@ mod tests {
                 .iter()
                 .any(|engine| engine.id == "gpt-image-2-repair")
         );
+    }
+
+    #[test]
+    fn failed_artifacts_block_only_dependent_steps() {
+        let mut failed = HashSet::new();
+        failed.insert(Artifact::Inpainted);
+
+        assert!(step_blocked_by_failed_artifacts(
+            &[Artifact::Inpainted, Artifact::Translations],
+            &failed,
+        ));
+        assert!(!step_blocked_by_failed_artifacts(
+            &[Artifact::SourceImage, Artifact::Translations],
+            &failed,
+        ));
+    }
+
+    #[test]
+    fn record_failed_step_outputs_marks_all_produced_artifacts_failed() {
+        let mut failed = HashSet::new();
+
+        record_failed_step_outputs(
+            &[Artifact::Inpainted, Artifact::RenderedSprites],
+            &mut failed,
+        );
+
+        assert!(failed.contains(&Artifact::Inpainted));
+        assert!(failed.contains(&Artifact::RenderedSprites));
     }
 }
