@@ -46,6 +46,43 @@ function sceneWithWorkflowModes(modes: string[]) {
   }
 }
 
+function sceneWithTranslatedWorkflowModes(modes: string[]) {
+  return {
+    epoch: 1,
+    scene: {
+      project: { name: 'Automation' },
+      pages: {
+        p1: {
+          id: 'p1',
+          name: 'P1',
+          width: 100,
+          height: 100,
+          nodes: Object.fromEntries(
+            modes.map((mode, index) => [
+              `t${index + 1}`,
+              {
+                id: `t${index + 1}`,
+                transform: { x: 0, y: index * 12, width: 10, height: 10, rotationDeg: 0 },
+                visible: true,
+                kind: {
+                  text: {
+                    text: `text ${index + 1}`,
+                    translation: `translation ${index + 1}`,
+                    workflow: {
+                      modes: mode.split('+'),
+                      resultMode: mode.includes('repair') ? 'repair' : 'lettering',
+                    },
+                  },
+                },
+              },
+            ]),
+          ),
+        },
+      },
+    },
+  }
+}
+
 function sceneWithTranslations(translations: Array<string | null | undefined>) {
   return {
     epoch: 1,
@@ -143,5 +180,43 @@ describe('CanvasToolbar automation plan', () => {
     await userEvent.click(await screen.findByTestId('toolbar-automation-plan'))
 
     expect(screen.getByText('缺少译文 2')).toBeInTheDocument()
+  })
+
+  it('starts project automation with mode-derived steps across the whole project', async () => {
+    const pipelineRequests: unknown[] = []
+    server.use(
+      http.get('/api/v1/scene.json', () =>
+        HttpResponse.json(
+          sceneWithTranslatedWorkflowModes(['lettering', 'repair', 'lettering+repair']),
+        ),
+      ),
+      http.get('/api/v1/config', () =>
+        HttpResponse.json({
+          pipeline: {
+            font_detector: 'mimo-font-selection',
+            inpainter: 'lama-manga',
+            repairer: 'gpt-image-2-repair',
+            renderer: 'koharu-renderer',
+          },
+        }),
+      ),
+      http.post('/api/v1/pipelines', async ({ request }) => {
+        pipelineRequests.push(await request.json())
+        return HttpResponse.json({ operationId: 'op-automation' })
+      }),
+    )
+
+    renderWithQuery(<CanvasToolbar />)
+
+    const automation = await screen.findByTestId('toolbar-automation')
+    await waitFor(() => expect(automation).toBeEnabled())
+
+    await userEvent.click(automation)
+
+    await waitFor(() => expect(pipelineRequests).toHaveLength(1))
+    expect(pipelineRequests[0]).toMatchObject({
+      steps: ['mimo-font-selection', 'lama-manga', 'gpt-image-2-repair', 'koharu-renderer'],
+    })
+    expect(pipelineRequests[0]).not.toHaveProperty('pages')
   })
 })
