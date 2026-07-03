@@ -458,6 +458,13 @@ fn bind_repair_layer_op(
     ensure_repair_text_node(scene, page_id, text_id)?;
     let mut workflow = current_text_workflow(scene, page_id, text_id)?;
     workflow.repair_layer = Some(layer_id);
+    workflow.repair_status = koharu_core::WorkflowStatus::Succeeded;
+    workflow.repair_trace = Some(koharu_core::RepairWorkflowTrace {
+        model: Some(String::from("manual-upload")),
+        prompt: None,
+        source_mask: None,
+        error: None,
+    });
     let add_node = name_bound_repair_layer_op(add_node, text_id);
     Ok(Op::Batch {
         ops: vec![
@@ -849,6 +856,15 @@ mod tests {
             panic!("expected text");
         };
         assert_eq!(text.workflow.repair_layer, Some(layer_id));
+        assert_eq!(
+            text.workflow.repair_status,
+            koharu_core::WorkflowStatus::Succeeded
+        );
+        let trace = text.workflow.repair_trace.as_ref().expect("repair trace");
+        assert_eq!(trace.model.as_deref(), Some("manual-upload"));
+        assert_eq!(trace.prompt, None);
+        assert_eq!(trace.source_mask, None);
+        assert_eq!(trace.error, None);
         let NodeKind::Image(image) = &page.nodes.get(&layer_id).expect("layer").kind else {
             panic!("expected image layer");
         };
