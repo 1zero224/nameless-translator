@@ -72,4 +72,12 @@ describe('useKeyboardShortcuts — Ctrl+A', () => {
 
     expect(useEditorUiStore.getState().mode).toBe('lasso')
   })
+
+  it('Shift+B switches to brush block selection mode', () => {
+    renderHook(() => useKeyboardShortcuts())
+
+    fireEvent.keyDown(window, { key: 'b', shiftKey: true })
+
+    expect(useEditorUiStore.getState().mode).toBe('brushBlock')
+  })
 })

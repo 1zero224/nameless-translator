@@ -29,6 +29,7 @@ import {
 import { useBlobData } from '@/hooks/useBlobData'
 import { useBlockContextMenu } from '@/hooks/useBlockContextMenu'
 import { useBlockDrafting } from '@/hooks/useBlockDrafting'
+import { useBrushBlockDrafting } from '@/hooks/useBrushBlockDrafting'
 import { useBrushCursor } from '@/hooks/useBrushCursor'
 import { useBrushLayerDisplay } from '@/hooks/useBrushLayerDisplay'
 import { useCanvasZoom } from '@/hooks/useCanvasZoom'
@@ -140,6 +141,15 @@ export function Workspace() {
       void createTextNode(draft)
     },
   })
+  const brushBlockDrawing = useBrushBlockDrafting({
+    mode,
+    page,
+    pointerToDocument,
+    clearSelection,
+    onCreateBlock: (draft) => {
+      void createTextNode(draft)
+    },
+  })
 
   const { brushCursorRef, isBrushMode, brushSize } = useBrushCursor(canvasRef, mode, page?.id)
 
@@ -176,6 +186,7 @@ export function Workspace() {
   })
   const blockDraftBindings = bindBlockDraft()
   const lassoDraftBindings = bindLassoDraft()
+  const brushBlockBindings = brushBlockDrawing.bind()
   const maskBindings = maskDrawing.bind()
   const brushBindings = brushDrawing.bind()
 
@@ -264,7 +275,7 @@ export function Workspace() {
         ? BRUSH_CURSOR
         : mode === 'block'
           ? 'cell'
-          : mode === 'lasso'
+          : mode === 'lasso' || mode === 'brushBlock'
             ? 'crosshair'
             : 'default',
     [isBrushMode, mode],
@@ -376,6 +387,21 @@ export function Workspace() {
                             transition: 'opacity 120ms ease',
                           }}
                           {...brushBindings}
+                        />
+                        <canvas
+                          ref={brushBlockDrawing.canvasRef}
+                          data-testid='workspace-brush-block-canvas'
+                          className='absolute inset-0'
+                          style={{
+                            width: '100%',
+                            height: '100%',
+                            opacity: brushBlockDrawing.visible ? 0.75 : 0,
+                            pointerEvents: mode === 'brushBlock' ? 'auto' : 'none',
+                            touchAction: 'none',
+                            zIndex: 24,
+                            transition: 'opacity 120ms ease',
+                          }}
+                          {...brushBlockBindings}
                         />
                         {showTextBlocksOverlay && (
                           <TextBlockLayer

@@ -6,7 +6,14 @@
 export type RgbaColor = [number, number, number, number]
 
 /** The active canvas tool. */
-export type ToolMode = 'select' | 'block' | 'lasso' | 'brush' | 'repairBrush' | 'eraser'
+export type ToolMode =
+  | 'select'
+  | 'block'
+  | 'lasso'
+  | 'brushBlock'
+  | 'brush'
+  | 'repairBrush'
+  | 'eraser'
 
 /** Bold/italic toggles applied to the rendered sprite shader. */
 export type RenderEffect = {

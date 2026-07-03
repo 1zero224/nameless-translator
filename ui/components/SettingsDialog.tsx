@@ -879,6 +879,7 @@ const SHORTCUT_ITEMS = [
   { key: 'select', labelKey: 'toolRail.select' },
   { key: 'block', labelKey: 'toolRail.block' },
   { key: 'lasso', labelKey: 'toolRail.lasso' },
+  { key: 'brushBlock', labelKey: 'toolRail.brushBlock' },
   { key: 'brush', labelKey: 'toolRail.brush' },
   { key: 'eraser', labelKey: 'toolRail.eraser' },
   { key: 'repairBrush', labelKey: 'toolRail.repairBrush' },

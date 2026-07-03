@@ -61,7 +61,13 @@ impl Engine for Model {
                     continue;
                 }
             };
-            let mask = openai_edit_mask_for_text(source_width, source_height, transform, text);
+            let mask = openai_edit_mask_for_text(
+                source_width,
+                source_height,
+                transform,
+                text,
+                Some(ctx.blobs),
+            );
             let mask_image = DynamicImage::ImageRgba8(mask.clone());
             let mask_png = encode_png(&mask_image)?;
             let mask_blob = ctx.blobs.put_bytes(&mask_png)?;

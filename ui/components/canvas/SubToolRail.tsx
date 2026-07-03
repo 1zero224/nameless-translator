@@ -12,7 +12,8 @@ import { usePreferencesStore } from '@/lib/stores/preferencesStore'
 
 export function SubToolRail() {
   const mode = useEditorUiStore((state) => state.mode)
-  const isBrushTool = mode === 'brush' || mode === 'eraser' || mode === 'repairBrush'
+  const isBrushTool =
+    mode === 'brushBlock' || mode === 'brush' || mode === 'eraser' || mode === 'repairBrush'
 
   const brushConfig = usePreferencesStore((state) => state.brushConfig)
   const setBrushConfig = usePreferencesStore((state) => state.setBrushConfig)

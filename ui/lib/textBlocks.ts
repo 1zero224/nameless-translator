@@ -14,7 +14,16 @@ export type PolygonBlockDraft = {
   points: number[][]
 }
 
-export type ManualBlockDraft = RectangleBlockDraft | PolygonBlockDraft
+export type BrushBlockDraft = {
+  kind: 'brush'
+  mask: string
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
+export type ManualBlockDraft = RectangleBlockDraft | PolygonBlockDraft | BrushBlockDraft
 
 export function createManualTextNode(id: string, draft: ManualBlockDraft): Node {
   const transform = draftToTransform(draft)
@@ -47,6 +56,15 @@ function draftToTransform(draft: ManualBlockDraft): Transform {
       rotationDeg: 0,
     }
   }
+  if (draft.kind === 'brush') {
+    return {
+      x: draft.x,
+      y: draft.y,
+      width: draft.width,
+      height: draft.height,
+      rotationDeg: 0,
+    }
+  }
 
   if (draft.points.length < 3) {
     throw new Error('polygon text block needs at least three points')
@@ -70,6 +88,9 @@ function draftToTransform(draft: ManualBlockDraft): Transform {
 function draftToSelectionShape(draft: ManualBlockDraft, transform: Transform) {
   if (draft.kind === 'rectangle') {
     return { kind: 'rectangle' as const, transform }
+  }
+  if (draft.kind === 'brush') {
+    return { kind: 'brush' as const, mask: draft.mask }
   }
   return { kind: 'polygon' as const, points: draft.points.map(([x, y]) => [x, y]) }
 }

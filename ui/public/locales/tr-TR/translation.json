@@ -260,6 +260,7 @@
     "select": "Seç",
     "block": "Blok",
     "lasso": "Lasso",
+    "brushBlock": "Brush selection",
     "brush": "Fırça",
     "repairBrush": "Onarım fırçası",
     "eraser": "Silgi"

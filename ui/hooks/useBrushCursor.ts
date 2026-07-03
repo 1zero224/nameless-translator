@@ -17,7 +17,7 @@ export function useBrushCursor(
   const brushSize = usePreferencesStore((state) => state.brushConfig.size)
 
   const isBrushMode = useMemo(
-    () => mode === 'brush' || mode === 'repairBrush' || mode === 'eraser',
+    () => mode === 'brushBlock' || mode === 'brush' || mode === 'repairBrush' || mode === 'eraser',
     [mode],
   )
 

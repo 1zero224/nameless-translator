@@ -4,6 +4,7 @@ import {
   MousePointer,
   VectorSquare,
   LassoSelect,
+  Paintbrush,
   Brush,
   Bandage,
   Eraser,
@@ -43,6 +44,12 @@ const MODES: ModeDefinition[] = [
     value: 'lasso',
     icon: LassoSelect,
     testId: 'tool-lasso',
+  },
+  {
+    labelKey: 'toolRail.brushBlock',
+    value: 'brushBlock',
+    icon: Paintbrush,
+    testId: 'tool-brushBlock',
   },
   {
     labelKey: 'toolRail.brush',

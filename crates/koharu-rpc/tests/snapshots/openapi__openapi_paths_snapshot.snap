@@ -29,6 +29,12 @@ expression: paths
         ],
     ),
     (
+        "/blobs",
+        [
+            "post",
+        ],
+    ),
+    (
         "/blobs/{hash}",
         [
             "get",

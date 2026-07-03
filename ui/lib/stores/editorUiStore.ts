@@ -118,6 +118,13 @@ export const useEditorUiStore = create<EditorUiState>((set) => ({
         showSegmentationMask: true,
         showBrushLayer: false,
       })
+    } else if (mode === 'brushBlock') {
+      set({
+        showRenderedImage: false,
+        showTextBlocksOverlay: true,
+        showSegmentationMask: false,
+        showBrushLayer: false,
+      })
     } else if (mode !== 'eraser') {
       set({ showSegmentationMask: false })
       if (mode === 'brush') set({ showBrushLayer: true })

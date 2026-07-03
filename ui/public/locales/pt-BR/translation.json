@@ -261,6 +261,7 @@
     "select": "Selecionar",
     "block": "Bloco",
     "lasso": "Lasso",
+    "brushBlock": "Brush selection",
     "brush": "Pincel",
     "repairBrush": "Pincel de reparo",
     "eraser": "Borracha"

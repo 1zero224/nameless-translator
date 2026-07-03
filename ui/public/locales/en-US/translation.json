@@ -293,6 +293,7 @@
     "select": "Select",
     "block": "Block",
     "lasso": "Lasso",
+    "brushBlock": "Brush selection",
     "brush": "Brush",
     "repairBrush": "Repair brush",
     "eraser": "Eraser"

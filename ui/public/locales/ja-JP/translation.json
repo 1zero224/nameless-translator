@@ -260,6 +260,7 @@
     "select": "選択",
     "block": "ブロック",
     "lasso": "投げ縄",
+    "brushBlock": "ブラシ選択",
     "brush": "ブラシ",
     "repairBrush": "リペアブラシ",
     "eraser": "消しゴム"

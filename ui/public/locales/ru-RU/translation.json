@@ -260,6 +260,7 @@
     "select": "Выделение",
     "block": "Блок",
     "lasso": "Lasso",
+    "brushBlock": "Brush selection",
     "brush": "Кисть",
     "repairBrush": "Кисть восстановления",
     "eraser": "Ластик"

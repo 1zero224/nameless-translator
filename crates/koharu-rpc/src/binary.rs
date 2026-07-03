@@ -5,7 +5,7 @@
 //! - `GET /blobs/:hash` — raw blob bytes.
 
 use axum::Json;
-use axum::body::Body;
+use axum::body::{Body, Bytes};
 use axum::extract::{Path, State};
 use axum::http::{HeaderValue, StatusCode, header::CONTENT_TYPE};
 use axum::response::{IntoResponse, Response};
@@ -21,6 +21,7 @@ pub fn router() -> OpenApiRouter<AppState> {
     OpenApiRouter::default()
         .routes(routes!(get_scene_bin))
         .routes(routes!(get_scene_json))
+        .routes(routes!(post_blob))
         .routes(routes!(get_blob))
         .routes(routes!(get_page_thumbnail))
 }
@@ -105,6 +106,29 @@ async fn get_blob(State(app): State<AppState>, Path(hash): Path<String>) -> ApiR
         HeaderValue::from_static("application/octet-stream"),
     );
     Ok(resp.into_response())
+}
+
+#[derive(Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct PostBlobResponse {
+    pub blob: BlobRef,
+}
+
+#[utoipa::path(
+    post,
+    path = "/blobs",
+    request_body(content_type = "application/octet-stream"),
+    responses((status = 200, body = PostBlobResponse))
+)]
+async fn post_blob(State(app): State<AppState>, body: Bytes) -> ApiResult<Json<PostBlobResponse>> {
+    let session = app
+        .current_session()
+        .ok_or_else(|| ApiError::bad_request("no project open"))?;
+    if body.is_empty() {
+        return Err(ApiError::bad_request("empty body"));
+    }
+    let blob = session.blobs.put_bytes(&body).map_err(ApiError::internal)?;
+    Ok(Json(PostBlobResponse { blob }))
 }
 
 /// Thumbnail of a page's source image. Cached on disk under

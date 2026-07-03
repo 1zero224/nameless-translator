@@ -19,6 +19,7 @@ export function useKeyboardShortcuts() {
       [shortcuts.select]: 'select',
       [shortcuts.block]: 'block',
       [shortcuts.lasso]: 'lasso',
+      [shortcuts.brushBlock]: 'brushBlock',
       [shortcuts.brush]: 'brush',
       [shortcuts.eraser]: 'eraser',
       [shortcuts.repairBrush]: 'repairBrush',

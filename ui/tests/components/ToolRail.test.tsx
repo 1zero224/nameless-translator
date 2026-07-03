@@ -25,4 +25,16 @@ describe('ToolRail', () => {
     expect(useEditorUiStore.getState().showTextBlocksOverlay).toBe(true)
     expect(lasso).toHaveAttribute('data-active', 'true')
   })
+
+  it('lets the user switch to brush block selection without enabling the brush layer', () => {
+    renderWithQuery(<ToolRail />)
+
+    const brushBlock = screen.getByTestId('tool-brushBlock')
+    fireEvent.click(brushBlock)
+
+    expect(useEditorUiStore.getState().mode).toBe('brushBlock')
+    expect(useEditorUiStore.getState().showTextBlocksOverlay).toBe(true)
+    expect(useEditorUiStore.getState().showBrushLayer).toBe(false)
+    expect(brushBlock).toHaveAttribute('data-active', 'true')
+  })
 })

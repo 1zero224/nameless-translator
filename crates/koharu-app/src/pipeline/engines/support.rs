@@ -3,13 +3,15 @@
 //! The patterns here map `koharu-ml` / `koharu-llm` outputs (plain
 //! `TextRegion`s, `DynamicImage`s) into `Op` sequences that mutate the scene.
 
+use std::collections::HashMap;
+
 use anyhow::{Context, Result};
 use image::{DynamicImage, GenericImageView, Rgba, RgbaImage, imageops::FilterType};
 use koharu_core::{
     BlobRef, FontPrediction, FontWorkflowTrace, ImageData, ImageRole, MaskData, MaskRole, Node,
     NodeDataPatch, NodeId, NodeKind, Op, PageId, ReadingOrder, Region, RepairWorkflowTrace, Scene,
-    TextData, TextDataPatch, TextSelectionShape, TextWorkflow, TextWorkflowMode, Transform,
-    WorkflowStatus,
+    TextData, TextDataPatch, TextSelection, TextSelectionShape, TextWorkflow, TextWorkflowMode,
+    Transform, WorkflowStatus,
 };
 
 use crate::blobs::BlobStore;
@@ -195,22 +197,26 @@ pub fn openai_edit_mask_for_text(
     source_height: u32,
     transform: &Transform,
     text: &TextData,
+    blobs: Option<&BlobStore>,
 ) -> RgbaImage {
     let Some(selection) = text.workflow.selection.as_ref() else {
         return openai_edit_mask_for_transform(source_width, source_height, transform);
     };
-    if !selection.shapes.iter().any(is_supported_selection_shape) {
+    let brush_masks = load_selection_brush_masks(selection, blobs, source_width, source_height);
+    if !selection
+        .shapes
+        .iter()
+        .any(|shape| is_supported_selection_shape(shape, &brush_masks))
+    {
         return openai_edit_mask_for_transform(source_width, source_height, transform);
     }
 
     let mut mask = RgbaImage::from_pixel(source_width, source_height, Rgba([0, 0, 0, 255]));
     for y in 0..source_height {
         for x in 0..source_width {
-            if selection
-                .shapes
-                .iter()
-                .any(|shape| selection_shape_contains_pixel(shape, x as f32 + 0.5, y as f32 + 0.5))
-            {
+            if selection.shapes.iter().any(|shape| {
+                selection_shape_contains_pixel(shape, &brush_masks, x as f32 + 0.5, y as f32 + 0.5)
+            }) {
                 mask.put_pixel(x, y, Rgba([0, 0, 0, 0]));
             }
         }
@@ -218,20 +224,73 @@ pub fn openai_edit_mask_for_text(
     mask
 }
 
-fn is_supported_selection_shape(shape: &TextSelectionShape) -> bool {
+fn load_selection_brush_masks(
+    selection: &TextSelection,
+    blobs: Option<&BlobStore>,
+    source_width: u32,
+    source_height: u32,
+) -> HashMap<BlobRef, RgbaImage> {
+    let Some(blobs) = blobs else {
+        return HashMap::new();
+    };
+    let mut masks = HashMap::new();
+    for shape in &selection.shapes {
+        let TextSelectionShape::Brush { mask } = shape else {
+            continue;
+        };
+        if masks.contains_key(mask) {
+            continue;
+        }
+        if let Ok(image) = blobs.load_image(mask) {
+            let rgba = if image.dimensions() == (source_width, source_height) {
+                image.to_rgba8()
+            } else {
+                image
+                    .resize_exact(source_width, source_height, FilterType::Nearest)
+                    .to_rgba8()
+            };
+            masks.insert(mask.clone(), rgba);
+        }
+    }
+    masks
+}
+
+fn is_supported_selection_shape(
+    shape: &TextSelectionShape,
+    brush_masks: &HashMap<BlobRef, RgbaImage>,
+) -> bool {
     match shape {
         TextSelectionShape::Rectangle { .. } => true,
         TextSelectionShape::Polygon { points } => points.len() >= 3,
-        TextSelectionShape::Brush { .. } => false,
+        TextSelectionShape::Brush { mask } => brush_masks.contains_key(mask),
     }
 }
 
-fn selection_shape_contains_pixel(shape: &TextSelectionShape, px: f32, py: f32) -> bool {
+fn selection_shape_contains_pixel(
+    shape: &TextSelectionShape,
+    brush_masks: &HashMap<BlobRef, RgbaImage>,
+    px: f32,
+    py: f32,
+) -> bool {
     match shape {
         TextSelectionShape::Rectangle { transform } => transform_contains_pixel(transform, px, py),
         TextSelectionShape::Polygon { points } => polygon_contains_pixel(points, px, py),
-        TextSelectionShape::Brush { .. } => false,
+        TextSelectionShape::Brush { mask } => brush_masks
+            .get(mask)
+            .is_some_and(|brush_mask| brush_mask_contains_pixel(brush_mask, px, py)),
     }
+}
+
+fn brush_mask_contains_pixel(mask: &RgbaImage, px: f32, py: f32) -> bool {
+    if !px.is_finite() || !py.is_finite() || px < 0.0 || py < 0.0 {
+        return false;
+    }
+    let x = px.floor() as u32;
+    let y = py.floor() as u32;
+    if x >= mask.width() || y >= mask.height() {
+        return false;
+    }
+    mask.get_pixel(x, y).0[3] > 0
 }
 
 fn transform_contains_pixel(transform: &Transform, px: f32, py: f32) -> bool {
@@ -979,11 +1038,43 @@ mod tests {
             rotation_deg: 0.0,
         };
 
-        let mask = openai_edit_mask_for_text(12, 12, &fallback_transform, &text);
+        let mask = openai_edit_mask_for_text(12, 12, &fallback_transform, &text, None);
 
         assert_eq!(mask.get_pixel(3, 3).0[3], 0);
         assert_eq!(mask.get_pixel(8, 8).0[3], 255);
         assert_eq!(mask.get_pixel(11, 11).0[3], 255);
+    }
+
+    #[test]
+    fn openai_edit_mask_for_text_uses_brush_selection_when_present() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let store = BlobStore::open(dir.path()).expect("blob store");
+        let mut brush = RgbaImage::new(6, 6);
+        brush.put_pixel(1, 2, Rgba([255, 255, 255, 255]));
+        brush.put_pixel(4, 3, Rgba([255, 255, 255, 255]));
+        let mut bytes = std::io::Cursor::new(Vec::new());
+        DynamicImage::ImageRgba8(brush)
+            .write_to(&mut bytes, image::ImageFormat::Png)
+            .expect("encode brush mask");
+        let brush_blob = store.put_bytes(bytes.get_ref()).expect("store brush mask");
+
+        let mut text = TextData::default();
+        text.workflow.selection = Some(TextSelection {
+            shapes: vec![TextSelectionShape::Brush { mask: brush_blob }],
+        });
+        let fallback_transform = Transform {
+            x: 0.0,
+            y: 0.0,
+            width: 6.0,
+            height: 6.0,
+            rotation_deg: 0.0,
+        };
+
+        let mask = openai_edit_mask_for_text(6, 6, &fallback_transform, &text, Some(&store));
+
+        assert_eq!(mask.get_pixel(1, 2).0[3], 0);
+        assert_eq!(mask.get_pixel(4, 3).0[3], 0);
+        assert_eq!(mask.get_pixel(0, 0).0[3], 255);
     }
 
     #[test]
@@ -997,7 +1088,7 @@ mod tests {
             rotation_deg: 0.0,
         };
 
-        let mask = openai_edit_mask_for_text(20, 20, &transform, &text);
+        let mask = openai_edit_mask_for_text(20, 20, &transform, &text, None);
 
         assert_eq!(mask.get_pixel(6, 7).0[3], 0);
         assert_eq!(mask.get_pixel(0, 0).0[3], 255);

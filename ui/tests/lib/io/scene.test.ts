@@ -16,6 +16,7 @@ import {
   updateConfig,
   uploadKhrArchive,
   uploadPages,
+  uploadSelectionMask,
 } from '@/lib/io/scene'
 import { ops } from '@/lib/ops'
 import { queryClient } from '@/lib/queryClient'
@@ -177,6 +178,27 @@ describe('pages + archive uploads', () => {
     expect(seen.contentType).toBe('application/zip')
     expect(summary.id).toBe('imported')
     expect(isInvalidated(getGetSceneJsonQueryKey())).toBe(true)
+  })
+
+  it('uploadSelectionMask stores a PNG blob without invalidating scene state', async () => {
+    const seen: { contentType: string | null; bytes: number[] } = {
+      contentType: null,
+      bytes: [],
+    }
+    server.use(
+      http.post('/api/v1/blobs', async ({ request }) => {
+        seen.contentType = request.headers.get('content-type')
+        seen.bytes = Array.from(new Uint8Array(await request.arrayBuffer()))
+        return HttpResponse.json({ blob: 'mask-hash' })
+      }),
+    )
+
+    const blob = await uploadSelectionMask(new Uint8Array([137, 80, 78, 71]))
+
+    expect(blob).toBe('mask-hash')
+    expect(seen.contentType).toBe('image/png')
+    expect(seen.bytes).toEqual([137, 80, 78, 71])
+    expect(isInvalidated(getGetSceneJsonQueryKey())).toBe(false)
   })
 })
 

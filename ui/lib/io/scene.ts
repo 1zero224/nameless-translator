@@ -206,6 +206,29 @@ export async function uploadRepairImageLayer(
   return res.node
 }
 
+export async function uploadSelectionMask(maskPng: Uint8Array): Promise<string> {
+  const res = await fetch('/api/v1/blobs', {
+    method: 'POST',
+    headers: { 'Content-Type': 'image/png' },
+    body: maskPng as BodyInit,
+  })
+  if (!res.ok) {
+    const body = await res.json().catch(() => null)
+    const message =
+      (body && typeof body === 'object' && 'message' in body && typeof body.message === 'string'
+        ? body.message
+        : null) ??
+      res.statusText ??
+      `HTTP ${res.status}`
+    throw new ApiError(res.status, message, body)
+  }
+  const body = (await res.json()) as { blob?: unknown }
+  if (typeof body.blob !== 'string') {
+    throw new ApiError(500, 'invalid blob upload response', body)
+  }
+  return body.blob
+}
+
 // Export ---------------------------------------------------------------------
 
 /**
