@@ -86,7 +86,7 @@ impl Default for PipelineConfig {
     fn default() -> Self {
         Self {
             detector: "pp-doclayout-v3".to_string(),
-            font_detector: "yuzumarker-font-detection".to_string(),
+            font_detector: "mimo-font-selection".to_string(),
             segmenter: "comic-text-detector-seg".to_string(),
             bubble_segmenter: "speech-bubble-segmentation".to_string(),
             ocr: "paddle-ocr-vl-1.6".to_string(),
@@ -484,6 +484,14 @@ mod tests {
         assert_eq!(config.pipeline.detector, PipelineConfig::default().detector);
         assert_eq!(config.pipeline.renderer, PipelineConfig::default().renderer);
         assert_eq!(config.pipeline.ocr, PipelineConfig::default().ocr);
+    }
+
+    #[test]
+    fn default_font_detector_uses_mimo_workflow() {
+        assert_eq!(
+            PipelineConfig::default().font_detector,
+            "mimo-font-selection"
+        );
     }
 
     #[test]

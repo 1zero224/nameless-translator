@@ -15,6 +15,7 @@ pub mod gpt_image_repair;
 pub mod lama;
 pub mod llm_translate;
 pub mod manga_ocr;
+pub mod mimo_font;
 pub mod mit48px_ocr;
 pub mod paddle_ocr;
 pub mod pp_doclayout;
