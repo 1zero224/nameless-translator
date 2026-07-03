@@ -8,10 +8,10 @@ use std::collections::HashMap;
 use anyhow::{Context, Result};
 use image::{DynamicImage, GenericImageView, Rgba, RgbaImage, imageops::FilterType};
 use koharu_core::{
-    BlobRef, FontPrediction, FontWorkflowTrace, ImageData, ImageRole, MaskData, MaskRole, Node,
-    NodeDataPatch, NodeId, NodeKind, Op, PageId, ReadingOrder, Region, RepairWorkflowTrace, Scene,
-    TextData, TextDataPatch, TextSelection, TextSelectionShape, TextWorkflow, TextWorkflowMode,
-    Transform, WorkflowStatus,
+    BlobRef, FontPrediction, FontWorkflowTrace, ImageData, ImageRole, MaskData, MaskRole,
+    NamedFontPrediction, Node, NodeDataPatch, NodeId, NodeKind, Op, PageId, ReadingOrder, Region,
+    RepairWorkflowTrace, Scene, TextData, TextDataPatch, TextSelection, TextSelectionShape,
+    TextWorkflow, TextWorkflowMode, Transform, WorkflowStatus,
 };
 
 use crate::blobs::BlobStore;
@@ -121,7 +121,7 @@ pub fn workflow_with_font_trace(text: &TextData, prediction: &FontPrediction) ->
                 "sans_serif".to_string()
             }
         }),
-        secondary_category: selected.and_then(|font| font.language.clone()),
+        secondary_category: selected.map(infer_font_secondary_category),
         candidate_fonts: prediction
             .named_fonts
             .iter()
@@ -134,6 +134,25 @@ pub fn workflow_with_font_trace(text: &TextData, prediction: &FontPrediction) ->
             .unwrap_or_default(),
     });
     workflow
+}
+
+fn infer_font_secondary_category(font: &NamedFontPrediction) -> String {
+    let name = font.name.to_lowercase();
+    if font.serif {
+        if contains_any(&name, &["kai", "kaiti", "klee", "楷", "行書"]) {
+            "kai".to_string()
+        } else {
+            "mincho".to_string()
+        }
+    } else if contains_any(&name, &["round", "rounded", "maru", "丸", "圆", "圓"]) {
+        "round".to_string()
+    } else {
+        "gothic".to_string()
+    }
+}
+
+fn contains_any(value: &str, needles: &[&str]) -> bool {
+    needles.iter().any(|needle| value.contains(needle))
 }
 
 pub fn workflow_with_lettering_status(text: &TextData, status: WorkflowStatus) -> TextWorkflow {
@@ -904,8 +923,9 @@ mod tests {
     use super::*;
     use image::{Rgba, RgbaImage};
     use koharu_core::{
-        BlobRef, ImageRole, NodeDataPatch, NodeId, NodeKind, ReadingOrder, TextSelection,
-        TextSelectionShape, TextWorkflow, TextWorkflowMode,
+        BlobRef, FontPrediction, ImageRole, NamedFontPrediction, NodeDataPatch, NodeId, NodeKind,
+        ReadingOrder, TextDirection, TextSelection, TextSelectionShape, TextWorkflow,
+        TextWorkflowMode,
     };
     use koharu_ml::types::TextRegion;
 
@@ -949,6 +969,55 @@ mod tests {
 
         assert_eq!(bbox, [5.0, 8.0, 110.0, 72.0]);
         assert_eq!(text.line_polygons.as_ref().expect("line polygons").len(), 2);
+    }
+
+    #[test]
+    fn workflow_with_font_trace_records_target_font_categories() {
+        let text = TextData::default();
+        let prediction = FontPrediction {
+            named_fonts: vec![NamedFontPrediction {
+                index: 7,
+                name: "Koharu Rounded Gothic".to_string(),
+                language: Some("ja".to_string()),
+                probability: 0.91,
+                serif: false,
+            }],
+            direction: TextDirection::Horizontal,
+            ..Default::default()
+        };
+
+        let workflow = workflow_with_font_trace(&text, &prediction);
+        let trace = workflow.font_trace.expect("font trace");
+
+        assert_eq!(trace.primary_category.as_deref(), Some("sans_serif"));
+        assert_eq!(trace.secondary_category.as_deref(), Some("round"));
+        assert_eq!(
+            trace.selected_font.as_deref(),
+            Some("Koharu Rounded Gothic")
+        );
+        assert_eq!(trace.candidate_fonts, vec!["Koharu Rounded Gothic"]);
+    }
+
+    #[test]
+    fn workflow_with_font_trace_classifies_serif_kai_candidates() {
+        let text = TextData::default();
+        let prediction = FontPrediction {
+            named_fonts: vec![NamedFontPrediction {
+                index: 2,
+                name: "Koharu Kaiti".to_string(),
+                language: Some("ja".to_string()),
+                probability: 0.84,
+                serif: true,
+            }],
+            direction: TextDirection::Horizontal,
+            ..Default::default()
+        };
+
+        let workflow = workflow_with_font_trace(&text, &prediction);
+        let trace = workflow.font_trace.expect("font trace");
+
+        assert_eq!(trace.primary_category.as_deref(), Some("serif"));
+        assert_eq!(trace.secondary_category.as_deref(), Some("kai"));
     }
 
     #[test]

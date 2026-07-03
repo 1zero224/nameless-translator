@@ -18,7 +18,10 @@ vi.mock('@/lib/io/openFiles', () => ({
   openImageLayerFile: openImageLayerFileMock,
 }))
 
-function sceneWithTextNodes({ repairSecond = false }: { repairSecond?: boolean } = {}) {
+function sceneWithTextNodes({
+  repairSecond = false,
+  fontTraceSecond = false,
+}: { repairSecond?: boolean; fontTraceSecond?: boolean } = {}) {
   return {
     epoch: 1,
     scene: {
@@ -39,7 +42,13 @@ function sceneWithTextNodes({ repairSecond = false }: { repairSecond?: boolean }
               id: 't2',
               transform: { x: 10, y: 10, width: 10, height: 10, rotationDeg: 0 },
               visible: true,
-              kind: { text: repairSecond ? repairWorkflowText('second') : { text: 'second' } },
+              kind: {
+                text: fontTraceSecond
+                  ? fontTraceWorkflowText('second')
+                  : repairSecond
+                    ? repairWorkflowText('second')
+                    : { text: 'second' },
+              },
             },
           },
         },
@@ -55,6 +64,23 @@ function repairWorkflowText(text: string) {
     workflow: {
       modes: ['lettering', 'repair'],
       resultMode: 'lettering',
+    },
+  }
+}
+
+function fontTraceWorkflowText(text: string) {
+  return {
+    text,
+    workflow: {
+      modes: ['lettering'],
+      resultMode: 'lettering',
+      fontTrace: {
+        primaryCategory: 'sans_serif',
+        secondaryCategory: 'gothic',
+        candidateFonts: ['Koharu Gothic', 'Koharu Rounded'],
+        selectedFont: 'Koharu Gothic',
+        notes: ['mimo category validated', 'candidate comparison score 0.92'],
+      },
     },
   }
 }
@@ -164,5 +190,22 @@ describe('TextBlocksPanel', () => {
     await userEvent.click(await screen.findByRole('button', { name: '绑定修图图层' }))
 
     await waitFor(() => expect(uploaded).toEqual([{ repairText: 't2', hasFile: true }]))
+  })
+
+  it('shows font workflow classification, candidates, final pick, and notes', async () => {
+    server.use(
+      http.get('/api/v1/scene.json', () =>
+        HttpResponse.json(sceneWithTextNodes({ fontTraceSecond: true })),
+      ),
+    )
+
+    renderWithQuery(<TextBlocksPanel />)
+
+    expect(await screen.findByText(/无衬线/)).toBeInTheDocument()
+    expect(screen.getByText(/黑体/)).toBeInTheDocument()
+    expect(screen.getAllByText(/Koharu Gothic/).length).toBeGreaterThanOrEqual(2)
+    expect(screen.getByText(/候选: Koharu Gothic \/ Koharu Rounded/)).toBeInTheDocument()
+    expect(screen.getByText('mimo category validated')).toBeInTheDocument()
+    expect(screen.getByText('candidate comparison score 0.92')).toBeInTheDocument()
   })
 })
