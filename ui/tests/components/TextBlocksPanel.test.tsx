@@ -192,7 +192,7 @@ describe('TextBlocksPanel', () => {
     await waitFor(() => expect(uploaded).toEqual([{ repairText: 't2', hasFile: true }]))
   })
 
-  it('shows font workflow classification, candidates, final pick, and notes', async () => {
+  it('does not render font workflow details inside the text block editor', async () => {
     server.use(
       http.get('/api/v1/scene.json', () =>
         HttpResponse.json(sceneWithTextNodes({ fontTraceSecond: true })),
@@ -201,11 +201,10 @@ describe('TextBlocksPanel', () => {
 
     renderWithQuery(<TextBlocksPanel />)
 
-    expect(await screen.findByText(/无衬线/)).toBeInTheDocument()
-    expect(screen.getByText(/黑体/)).toBeInTheDocument()
-    expect(screen.getAllByText(/Koharu Gothic/).length).toBeGreaterThanOrEqual(2)
-    expect(screen.getByText(/候选: Koharu Gothic \/ Koharu Rounded/)).toBeInTheDocument()
-    expect(screen.getByText('mimo category validated')).toBeInTheDocument()
-    expect(screen.getByText('candidate comparison score 0.92')).toBeInTheDocument()
+    expect(await screen.findByTestId('textblock-card-1')).toBeInTheDocument()
+    expect(screen.queryByText(/无衬线/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/Koharu Gothic/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/候选:/)).not.toBeInTheDocument()
+    expect(screen.queryByText('mimo category validated')).not.toBeInTheDocument()
   })
 })

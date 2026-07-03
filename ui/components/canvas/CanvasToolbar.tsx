@@ -1,10 +1,13 @@
 'use client'
 
+import { useQueryClient } from '@tanstack/react-query'
 import {
   BotIcon,
+  EyeIcon,
   LanguagesIcon,
   ListChecksIcon,
   LoaderCircleIcon,
+  PaintbrushIcon,
   ScanIcon,
   ScanTextIcon,
   TriangleAlertIcon,
@@ -12,7 +15,7 @@ import {
   Wand2Icon,
 } from 'lucide-react'
 import { motion } from 'motion/react'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type ComponentType } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
@@ -31,13 +34,24 @@ import { useScene } from '@/hooks/useScene'
 import {
   deleteCurrentLlm,
   getConfig,
+  getGetConfigQueryKey,
+  patchConfig,
   putCurrentLlm,
   startPipeline,
   useGetCatalog,
   useGetConfig,
   useGetCurrentLlm,
+  useGetEngineCatalog,
 } from '@/lib/api/default/default'
-import type { LlmCatalog, LlmCatalogModel, LlmProviderCatalog, LlmTarget } from '@/lib/api/schemas'
+import type {
+  ConfigPatch,
+  EngineCatalogEntry,
+  LlmCatalog,
+  LlmCatalogModel,
+  LlmProviderCatalog,
+  LlmTarget,
+  PipelineConfig,
+} from '@/lib/api/schemas'
 import {
   buildAutomationPlan,
   buildAutomationSteps,
@@ -74,6 +88,25 @@ const flattenCatalogModels = (catalog?: LlmCatalog): SelectableLlmModel[] => [
     .flatMap((p) => p.models.map((model) => ({ model, provider: p }))),
 ]
 
+type PipelineEngineKey =
+  | 'detector'
+  | 'font_detector'
+  | 'ocr'
+  | 'translator'
+  | 'inpainter'
+  | 'repairer'
+  | 'renderer'
+
+const PIPELINE_PATCH_KEYS: Record<PipelineEngineKey, keyof NonNullable<ConfigPatch['pipeline']>> = {
+  detector: 'detector',
+  font_detector: 'fontDetector',
+  ocr: 'ocr',
+  translator: 'translator',
+  inpainter: 'inpainter',
+  repairer: 'repairer',
+  renderer: 'renderer',
+}
+
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
@@ -83,7 +116,8 @@ export function CanvasToolbar() {
     <div className='flex items-center gap-2 border-b border-border/60 bg-card px-3 py-2 text-xs text-foreground'>
       <WorkflowButtons />
       <div className='flex-1' />
-      <LlmStatusPopover />
+      <AutomationButtons />
+      <ModelConfigPopover />
     </div>
   )
 }
@@ -105,18 +139,11 @@ function useIsProcessing(): boolean {
 function WorkflowButtons() {
   const { t } = useTranslation()
   const { data: llmState } = useGetCurrentLlm()
-  const { data: config } = useGetConfig()
   const llmReady = llmState?.status === 'ready'
-  const { scene } = useScene()
   const pageId = useSelectionStore((s) => s.pageId)
   const hasPage = pageId !== null
-  const hasProject = scene !== null
   const isProcessing = useIsProcessing()
   const currentStep = useCurrentStep()
-  const automationPlan = useMemo(
-    () => buildAutomationPlan(config?.pipeline ?? {}, scene),
-    [config?.pipeline, scene],
-  )
 
   /**
    * Run a pipeline step (or a small chain). `GET /config` is the single
@@ -127,8 +154,8 @@ function WorkflowButtons() {
    * Detect is the only multi-engine button; it bundles detector +
    * segmenter + font-detector so the subsequent single-engine steps
    * (OCR / Inpaint / Render) find their inputs already on the page. The
-   * Project automation narrows its step list from text-block workflow modes
-   * before dispatch so repair-only pages do not run lettering cleanup steps.
+   * Project automation lives in the right-side control group; these buttons
+   * stay page-scoped and report only their own active step.
    */
   const runStep = async (
     pick: (p: NonNullable<Awaited<ReturnType<typeof getConfig>>['pipeline']>) => string[],
@@ -163,7 +190,6 @@ function WorkflowButtons() {
   const translateChain: PipelinePick = (p) => [p.translator!]
   const inpaintChain: PipelinePick = (p) => [p.inpainter!]
   const renderChain: PipelinePick = (p) => [p.renderer!]
-  const automationChain: PipelinePick = (p) => [...buildAutomationSteps(p, scene)]
 
   const isDetecting = currentStep === 'detect'
   const isOcr = currentStep === 'ocr'
@@ -174,26 +200,11 @@ function WorkflowButtons() {
   return (
     <div className='flex items-center gap-0.5'>
       <Button
-        variant='default'
-        size='xs'
-        onClick={() => void runStepForProject(automationChain)}
-        data-testid='toolbar-automation'
-        disabled={!hasProject || isProcessing || !automationPlan.canRun}
-      >
-        {isProcessing ? (
-          <LoaderCircleIcon className='size-4 animate-spin' />
-        ) : (
-          <BotIcon className='size-4' />
-        )}
-        启动自动化工作流
-      </Button>
-      <AutomationPlanPopover plan={automationPlan} />
-      <Separator orientation='vertical' className='mx-0.5 h-4' />
-      <Button
         variant='ghost'
         size='xs'
         onClick={() => void runStep(detectChain)}
         data-testid='toolbar-detect'
+        data-step-running={isDetecting ? 'true' : 'false'}
         disabled={!hasPage || isProcessing}
       >
         {isDetecting ? (
@@ -209,6 +220,7 @@ function WorkflowButtons() {
         size='xs'
         onClick={() => void runStep(ocrChain)}
         data-testid='toolbar-ocr'
+        data-step-running={isOcr ? 'true' : 'false'}
         disabled={!hasPage || isProcessing}
       >
         {isOcr ? (
@@ -225,6 +237,7 @@ function WorkflowButtons() {
         onClick={() => void runStep(translateChain)}
         disabled={!hasPage || !llmReady || isProcessing}
         data-testid='toolbar-translate'
+        data-step-running={isTranslating ? 'true' : 'false'}
       >
         {isTranslating ? (
           <LoaderCircleIcon className='size-4 animate-spin' />
@@ -239,6 +252,7 @@ function WorkflowButtons() {
         size='xs'
         onClick={() => void runStep(inpaintChain)}
         data-testid='toolbar-inpaint'
+        data-step-running={isInpainting ? 'true' : 'false'}
         disabled={!hasPage || isProcessing}
       >
         {isInpainting ? (
@@ -254,6 +268,7 @@ function WorkflowButtons() {
         size='xs'
         onClick={() => void runStep(renderChain)}
         data-testid='toolbar-render'
+        data-step-running={isRendering ? 'true' : 'false'}
         disabled={!hasPage || isProcessing}
       >
         {isRendering ? (
@@ -265,6 +280,53 @@ function WorkflowButtons() {
       </Button>
     </div>
   )
+}
+
+function AutomationButtons() {
+  const { data: config } = useGetConfig()
+  const { scene } = useScene()
+  const hasProject = scene !== null
+  const isProcessing = useIsProcessing()
+  const jobs = useJobsStore((s) => s.jobs)
+  const [automationOperationId, setAutomationOperationId] = useState<string | null>(null)
+  const automationPlan = useMemo(
+    () => buildAutomationPlan(config?.pipeline ?? {}, scene),
+    [config?.pipeline, scene],
+  )
+  const automationJob = automationOperationId ? jobs[automationOperationId] : undefined
+  const isAutomationRunning = automationJob?.status === 'running'
+
+  useEffect(() => {
+    if (!automationOperationId) return
+    const job = jobs[automationOperationId]
+    if (job && job.status !== 'running') setAutomationOperationId(null)
+  }, [automationOperationId, jobs])
+
+  type PipelinePick = (
+    p: NonNullable<Awaited<ReturnType<typeof getConfig>>['pipeline']>,
+  ) => string[]
+  const automationChain: PipelinePick = (p) => [...buildAutomationSteps(p, scene)]
+
+  return (
+    <div className='flex items-center gap-0.5'>
+      <Button
+        variant='default'
+        size='xs'
+        onClick={() => void runStepForProject(automationChain)}
+        data-testid='toolbar-automation'
+        data-automation-running={isAutomationRunning ? 'true' : 'false'}
+        disabled={!hasProject || isProcessing || !automationPlan.canRun}
+      >
+        {isAutomationRunning ? (
+          <LoaderCircleIcon className='size-4 animate-spin' />
+        ) : (
+          <BotIcon className='size-4' />
+        )}
+        启动自动化工作流
+      </Button>
+      <AutomationPlanPopover plan={automationPlan} />
+    </div>
+  )
 
   async function runStepForProject(pick: PipelinePick) {
     const cfg = await getConfig()
@@ -273,13 +335,14 @@ function WorkflowButtons() {
     if (steps.length === 0) return
     const editor = useEditorUiStore.getState()
     const prefs = usePreferencesStore.getState()
-    await startPipeline({
+    const response = await startPipeline({
       steps,
       targetLanguage: editor.selectedLanguage,
       systemPrompt: prefs.customSystemPrompt,
       defaultFont: prefs.defaultFont,
       readingOrder: editor.readingOrder === 'custom' ? undefined : editor.readingOrder,
     })
+    setAutomationOperationId(response.operationId)
   }
 }
 
@@ -288,6 +351,11 @@ function AutomationPlanPopover({ plan }: { plan: AutomationPlan }) {
   const missingTranslations = plan.counts.missingTranslationBlocks > 0
   const blocked = missing || missingTranslations
   const empty = plan.counts.textBlocks === 0
+  const triggerLabel = missingTranslations
+    ? `缺${plan.counts.missingTranslationBlocks}译文`
+    : missing
+      ? '缺配置'
+      : `${plan.counts.textBlocks}块`
   return (
     <Popover>
       <PopoverTrigger asChild>
@@ -304,7 +372,7 @@ function AutomationPlanPopover({ plan }: { plan: AutomationPlan }) {
           ) : (
             <ListChecksIcon className='size-3.5' />
           )}
-          {plan.counts.textBlocks}块
+          {triggerLabel}
         </Button>
       </PopoverTrigger>
       <PopoverContent
@@ -361,19 +429,24 @@ function PlanStat({ label }: { label: string }) {
   )
 }
 
-function LlmStatusPopover() {
+function ModelConfigPopover() {
   const { t } = useTranslation()
+  const queryClient = useQueryClient()
   const { data: llmCatalog } = useGetCatalog()
   const { data: llmState } = useGetCurrentLlm()
+  const { data: config } = useGetConfig()
+  const { data: engineCatalog } = useGetEngineCatalog()
   const llmReady = llmState?.status === 'ready'
   const llmLoading = llmState?.status === 'loading'
   const [popoverOpen, setPopoverOpen] = useState(false)
   const [busy, setBusy] = useState(false)
+  const [engineBusyKey, setEngineBusyKey] = useState<PipelineEngineKey | null>(null)
   const llmModels: LlmModelOption[] = useMemo(() => flattenCatalogModels(llmCatalog), [llmCatalog])
   const selectedTarget = useEditorUiStore((s) => s.selectedTarget)
   const customSystemPrompt = usePreferencesStore((s) => s.customSystemPrompt)
   const setCustomSystemPrompt = usePreferencesStore((s) => s.setCustomSystemPrompt)
   const llmSelectedLanguage = useEditorUiStore((s) => s.selectedLanguage)
+  const pipeline = (config?.pipeline ?? {}) as PipelineConfig
 
   const selectedModel = useMemo(
     () => llmModels.find(({ model }) => sameLlmTarget(model.target, selectedTarget)),
@@ -416,6 +489,21 @@ function LlmStatusPopover() {
     }
   }
 
+  const handlePipelineChange = async (key: PipelineEngineKey, value: string) => {
+    const patchKey = PIPELINE_PATCH_KEYS[key]
+    const pipelinePatch = { [patchKey]: value } as NonNullable<ConfigPatch['pipeline']>
+    setEngineBusyKey(key)
+    try {
+      const next = await patchConfig({ pipeline: pipelinePatch })
+      queryClient.setQueryData(getGetConfigQueryKey(), next)
+      await queryClient.invalidateQueries({ queryKey: getGetConfigQueryKey() })
+    } catch (e) {
+      useEditorUiStore.getState().showError(String(e))
+    } finally {
+      setEngineBusyKey(null)
+    }
+  }
+
   useEffect(() => {
     if (llmModels.length === 0) return
     const hasCurrent = llmModels.some(({ model }) => sameLlmTarget(model.target, selectedTarget))
@@ -445,7 +533,7 @@ function LlmStatusPopover() {
     <Popover open={popoverOpen} onOpenChange={setPopoverOpen}>
       <PopoverTrigger asChild>
         <button
-          data-testid='llm-trigger'
+          data-testid='model-config-trigger'
           data-llm-ready={llmReady ? 'true' : 'false'}
           data-llm-loading={indicatorBusy ? 'true' : 'false'}
           className={`flex h-6 cursor-pointer items-center gap-1.5 rounded-full px-2.5 text-[11px] font-medium shadow-sm transition hover:opacity-80 ${
@@ -473,47 +561,50 @@ function LlmStatusPopover() {
                 : {}
             }
           />
-          LLM
+          <span data-testid='llm-trigger' className='contents'>
+            模型
+          </span>
         </button>
       </PopoverTrigger>
-      <PopoverContent align='end' className='w-[280px] p-0' data-testid='llm-popover'>
-        <div className='flex flex-col gap-1.5 px-3 pt-3 pb-2.5'>
-          <span className='text-[10px] font-medium text-muted-foreground uppercase'>
-            {t('llm.model')}
-          </span>
-          <div className='flex items-center gap-1.5'>
-            <LlmModelSelect
-              data-testid='llm-model-select'
-              value={selectedTargetKey}
-              options={llmModels}
-              getKey={({ model }) => llmTargetKey(model.target)}
-              placeholder={t('llm.selectPlaceholder')}
-              onChange={handleSetSelectedModel}
-              triggerClassName='min-w-0 flex-1'
+      <PopoverContent
+        align='end'
+        className='max-h-[80vh] w-[360px] overflow-y-auto p-0'
+        data-testid='model-config-popover'
+      >
+        <div data-testid='llm-popover' className='flex flex-col'>
+          <section className='flex flex-col gap-1.5 px-3 pt-3 pb-2.5'>
+            <ModelSectionTitle icon={LanguagesIcon} title='翻译模型' />
+            <div className='flex items-center gap-1.5'>
+              <LlmModelSelect
+                data-testid='llm-model-select'
+                value={selectedTargetKey}
+                options={llmModels}
+                getKey={({ model }) => llmTargetKey(model.target)}
+                placeholder={t('llm.selectPlaceholder')}
+                onChange={handleSetSelectedModel}
+                triggerClassName='min-w-0 flex-1'
+              />
+              <Button
+                data-testid='llm-load-toggle'
+                data-llm-ready={selectedIsLoaded ? 'true' : 'false'}
+                data-llm-loading={indicatorBusy ? 'true' : 'false'}
+                variant={selectedIsLoaded ? 'ghost' : 'default'}
+                size='sm'
+                onClick={() => void handleToggleLoadUnload()}
+                disabled={!selectedTarget || indicatorBusy}
+                className='h-6 shrink-0 gap-1 px-2 text-[11px]'
+              >
+                {indicatorBusy ? <LoaderCircleIcon className='size-3 animate-spin' /> : null}
+                {selectedIsLoaded ? t('llm.unload') : t('llm.load')}
+              </Button>
+            </div>
+            <PipelineEngineSelect
+              label='翻译引擎'
+              value={pipeline.translator}
+              engines={engineCatalog?.translators ?? []}
+              busy={engineBusyKey === 'translator'}
+              onChange={(value) => void handlePipelineChange('translator', value)}
             />
-            <Button
-              data-testid='llm-load-toggle'
-              data-llm-ready={selectedIsLoaded ? 'true' : 'false'}
-              data-llm-loading={indicatorBusy ? 'true' : 'false'}
-              variant={selectedIsLoaded ? 'ghost' : 'default'}
-              size='sm'
-              onClick={() => void handleToggleLoadUnload()}
-              disabled={!selectedTarget || indicatorBusy}
-              className='h-6 shrink-0 gap-1 px-2 text-[11px]'
-            >
-              {indicatorBusy ? <LoaderCircleIcon className='size-3 animate-spin' /> : null}
-              {selectedIsLoaded ? t('llm.unload') : t('llm.load')}
-            </Button>
-          </div>
-        </div>
-        <div className='px-3'>
-          <Separator />
-        </div>
-        <div className='flex flex-col gap-1 px-3 pt-2.5 pb-3'>
-          <span className='text-[10px] font-medium text-muted-foreground uppercase'>
-            {t('llm.translationSettings')}
-          </span>
-          <div className='flex flex-col gap-1.5'>
             {selectedModelLanguages.length > 0 ? (
               <Select
                 value={llmSelectedLanguage ?? selectedModelLanguages[0]}
@@ -543,9 +634,120 @@ function LlmStatusPopover() {
               rows={5}
               className='min-h-0 resize-y px-2 py-1.5 text-xs leading-snug md:text-xs'
             />
-          </div>
+          </section>
+          <Separator />
+          <section className='flex flex-col gap-1.5 px-3 py-2.5'>
+            <ModelSectionTitle icon={EyeIcon} title='视觉模型' />
+            <PipelineEngineSelect
+              label='检测'
+              value={pipeline.detector}
+              engines={engineCatalog?.detectors ?? []}
+              busy={engineBusyKey === 'detector'}
+              onChange={(value) => void handlePipelineChange('detector', value)}
+            />
+            <PipelineEngineSelect
+              label='字体识别'
+              value={pipeline.font_detector}
+              engines={engineCatalog?.fontDetectors ?? []}
+              busy={engineBusyKey === 'font_detector'}
+              onChange={(value) => void handlePipelineChange('font_detector', value)}
+            />
+            <PipelineEngineSelect
+              label='OCR'
+              value={pipeline.ocr}
+              engines={engineCatalog?.ocr ?? []}
+              busy={engineBusyKey === 'ocr'}
+              onChange={(value) => void handlePipelineChange('ocr', value)}
+            />
+          </section>
+          <Separator />
+          <section className='flex flex-col gap-1.5 px-3 py-2.5'>
+            <ModelSectionTitle icon={PaintbrushIcon} title='修图模型' />
+            <PipelineEngineSelect
+              label='涂白'
+              value={pipeline.inpainter}
+              engines={engineCatalog?.inpainters ?? []}
+              busy={engineBusyKey === 'inpainter'}
+              onChange={(value) => void handlePipelineChange('inpainter', value)}
+            />
+            <PipelineEngineSelect
+              label='修图生成'
+              value={pipeline.repairer}
+              engines={engineCatalog?.repairers ?? []}
+              busy={engineBusyKey === 'repairer'}
+              onChange={(value) => void handlePipelineChange('repairer', value)}
+            />
+            <PipelineEngineSelect
+              label='嵌字渲染'
+              value={pipeline.renderer}
+              engines={engineCatalog?.renderers ?? []}
+              busy={engineBusyKey === 'renderer'}
+              onChange={(value) => void handlePipelineChange('renderer', value)}
+            />
+          </section>
         </div>
       </PopoverContent>
     </Popover>
+  )
+}
+
+function ModelSectionTitle({
+  icon: Icon,
+  title,
+}: {
+  icon: ComponentType<{ className?: string }>
+  title: string
+}) {
+  return (
+    <div className='flex items-center gap-1.5 text-[10px] font-semibold text-muted-foreground uppercase'>
+      <Icon className='size-3.5' />
+      <span>{title}</span>
+    </div>
+  )
+}
+
+function PipelineEngineSelect({
+  label,
+  value,
+  engines,
+  busy,
+  onChange,
+}: {
+  label: string
+  value?: string | null
+  engines: EngineCatalogEntry[]
+  busy?: boolean
+  onChange: (value: string) => void
+}) {
+  const current = value?.trim() || ''
+  const hasCurrent = current && engines.some((engine) => engine.id === current)
+  const options =
+    current && !hasCurrent ? [{ id: current, name: current, produces: [] }, ...engines] : engines
+
+  if (options.length === 0) {
+    return (
+      <div className='flex items-center justify-between gap-2 rounded-md border border-border bg-muted/30 px-2 py-1.5'>
+        <span className='shrink-0 text-[10px] text-muted-foreground'>{label}</span>
+        <span className='truncate text-[11px] text-muted-foreground'>无可用引擎</span>
+      </div>
+    )
+  }
+
+  return (
+    <div className='grid grid-cols-[4.25rem_minmax(0,1fr)] items-center gap-2'>
+      <span className='text-[10px] text-muted-foreground'>{label}</span>
+      <Select value={current || options[0]?.id} onValueChange={onChange} disabled={busy}>
+        <SelectTrigger className='h-7 w-full min-w-0 text-[11px]'>
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent position='popper'>
+          {options.map((engine) => (
+            <SelectItem key={engine.id} value={engine.id} className='text-xs'>
+              {engine.name}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </div>
   )
 }

@@ -6,7 +6,7 @@ import { useHotkeys } from 'react-hotkeys-hook'
 
 import { useBlobImage } from '@/hooks/useBlobData'
 import { useCurrentPage, useTextNodes, type TextNodeEntry } from '@/hooks/useCurrentPage'
-import type { NodeDataPatch, Transform } from '@/lib/api/schemas'
+import type { NodeDataPatch, TextSelectionShape, Transform } from '@/lib/api/schemas'
 import { applyOp, queueAutoRender } from '@/lib/io/scene'
 import { ops } from '@/lib/ops'
 import { useEditorUiStore } from '@/lib/stores/editorUiStore'
@@ -307,11 +307,12 @@ function TextBlockItem({
         cursor: interactive ? 'move' : 'default',
       }}
     >
+      <SelectionShapeOverlay shapes={node.data.workflow?.selection?.shapes} transform={t} />
       <div
-        className={`absolute inset-0 rounded-md ${
+        className={`pointer-events-none absolute inset-0 rounded-md ${
           selected
-            ? 'border-[3px] border-primary bg-primary/15'
-            : 'border-2 border-rose-400/60 bg-rose-400/5'
+            ? 'border-[3px] border-primary bg-primary/5'
+            : 'border-2 border-rose-400/60 bg-transparent'
         }`}
       />
       <div
@@ -328,6 +329,118 @@ function TextBlockItem({
         </>
       )}
     </div>
+  )
+}
+
+function SelectionShapeOverlay({
+  shapes,
+  transform,
+}: {
+  shapes?: TextSelectionShape[] | null
+  transform: Transform
+}) {
+  if (!shapes || shapes.length === 0) {
+    return <DefaultSelectionFill />
+  }
+  return (
+    <div className='pointer-events-none absolute inset-0 overflow-hidden rounded-md'>
+      {shapes.map((shape, index) => (
+        <SelectionShape key={index} shape={shape} transform={transform} />
+      ))}
+    </div>
+  )
+}
+
+function SelectionShape({ shape, transform }: { shape: TextSelectionShape; transform: Transform }) {
+  switch (shape.kind) {
+    case 'polygon':
+      return <PolygonSelectionShape shape={shape} transform={transform} />
+    case 'brush':
+      return <BrushSelectionShape shape={shape} />
+    case 'rectangle':
+      return <RectangleSelectionShape shape={shape} transform={transform} />
+  }
+}
+
+function DefaultSelectionFill() {
+  return (
+    <div className='pointer-events-none absolute inset-0 rounded-md bg-rose-400/5' aria-hidden />
+  )
+}
+
+function PolygonSelectionShape({
+  shape,
+  transform,
+}: {
+  shape: Extract<TextSelectionShape, { kind: 'polygon' }>
+  transform: Transform
+}) {
+  const width = Math.max(1, transform.width)
+  const height = Math.max(1, transform.height)
+  const points = shape.points
+    .map(([x, y]) => `${(x ?? 0) - transform.x},${(y ?? 0) - transform.y}`)
+    .join(' ')
+
+  return (
+    <svg
+      data-testid='text-block-selection-polygon'
+      className='absolute inset-0 size-full'
+      viewBox={`0 0 ${width} ${height}`}
+      preserveAspectRatio='none'
+      aria-hidden='true'
+    >
+      <polygon
+        points={points}
+        fill='rgba(244, 63, 94, 0.18)'
+        stroke='rgb(244, 63, 94)'
+        strokeWidth='2'
+        vectorEffect='non-scaling-stroke'
+      />
+    </svg>
+  )
+}
+
+function BrushSelectionShape({ shape }: { shape: Extract<TextSelectionShape, { kind: 'brush' }> }) {
+  const { data: src } = useBlobImage(shape.mask)
+
+  return (
+    <div
+      data-testid='text-block-selection-brush'
+      className='absolute inset-0 overflow-hidden rounded-md bg-rose-400/10'
+      aria-hidden='true'
+    >
+      {src ? (
+        <img
+          alt=''
+          src={src}
+          draggable={false}
+          className='size-full object-fill opacity-70 mix-blend-screen select-none'
+        />
+      ) : null}
+    </div>
+  )
+}
+
+function RectangleSelectionShape({
+  shape,
+  transform,
+}: {
+  shape: Extract<TextSelectionShape, { kind: 'rectangle' }>
+  transform: Transform
+}) {
+  const x = shape.transform.x - transform.x
+  const y = shape.transform.y - transform.y
+  return (
+    <div
+      className='absolute rounded-sm bg-rose-400/12'
+      style={{
+        left: `${(x / Math.max(1, transform.width)) * 100}%`,
+        top: `${(y / Math.max(1, transform.height)) * 100}%`,
+        width: `${(shape.transform.width / Math.max(1, transform.width)) * 100}%`,
+        height: `${(shape.transform.height / Math.max(1, transform.height)) * 100}%`,
+      }}
+      aria-hidden='true'
+    />
   )
 }
 

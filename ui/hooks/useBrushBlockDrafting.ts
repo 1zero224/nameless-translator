@@ -107,5 +107,8 @@ export function useBrushBlockDrafting({
     canvasRef: canvasDrawing.canvasRef,
     bind: isActive ? canvasDrawing.bind : () => ({}),
     visible: isActive || hasDraft,
+    hasDraft,
+    finalize,
+    reset,
   }
 }

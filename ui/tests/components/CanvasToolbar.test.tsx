@@ -176,10 +176,47 @@ describe('CanvasToolbar automation plan', () => {
 
     const automation = await screen.findByTestId('toolbar-automation')
     await waitFor(() => expect(automation).toBeDisabled())
+    expect(await screen.findByTestId('toolbar-automation-plan')).toHaveTextContent('缺2译文')
 
     await userEvent.click(await screen.findByTestId('toolbar-automation-plan'))
 
     expect(screen.getByText('缺少译文 2')).toBeInTheDocument()
+  })
+
+  it('does not show automation as running when another pipeline step is running', async () => {
+    server.use(
+      http.get('/api/v1/scene.json', () =>
+        HttpResponse.json(sceneWithTranslatedWorkflowModes(['lettering'])),
+      ),
+      http.get('/api/v1/config', () =>
+        HttpResponse.json({
+          pipeline: {
+            font_detector: 'mimo-font-selection',
+            inpainter: 'lama-manga',
+            repairer: 'gpt-image-2-repair',
+            renderer: 'koharu-renderer',
+          },
+        }),
+      ),
+    )
+    useJobsStore.getState().progress({
+      jobId: 'detect-job',
+      status: 'running',
+      step: 'detect',
+      currentPage: 0,
+      totalPages: 1,
+      currentStepIndex: 0,
+      totalSteps: 1,
+      overallPercent: 0.5,
+    })
+
+    renderWithQuery(<CanvasToolbar />)
+
+    expect(await screen.findByTestId('toolbar-automation')).toHaveAttribute(
+      'data-automation-running',
+      'false',
+    )
+    expect(screen.getByTestId('toolbar-detect')).toHaveAttribute('data-step-running', 'true')
   })
 
   it('starts project automation with mode-derived steps across the whole project', async () => {
@@ -218,5 +255,21 @@ describe('CanvasToolbar automation plan', () => {
       steps: ['mimo-font-selection', 'lama-manga', 'gpt-image-2-repair', 'koharu-renderer'],
     })
     expect(pipelineRequests[0]).not.toHaveProperty('pages')
+  })
+
+  it('groups model configuration into translation, vision, and repair sections', async () => {
+    server.use(
+      http.get('/api/v1/scene.json', () =>
+        HttpResponse.json(sceneWithTranslatedWorkflowModes(['lettering'])),
+      ),
+    )
+
+    renderWithQuery(<CanvasToolbar />)
+
+    await userEvent.click(await screen.findByTestId('model-config-trigger'))
+
+    expect(screen.getByText('翻译模型')).toBeInTheDocument()
+    expect(screen.getByText('视觉模型')).toBeInTheDocument()
+    expect(screen.getByText('修图模型')).toBeInTheDocument()
   })
 })

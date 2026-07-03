@@ -7,7 +7,6 @@ import {
   ImagePlusIcon,
   Languages,
   LoaderCircleIcon,
-  SparklesIcon,
   Trash2Icon,
   TriangleAlertIcon,
   TypeIcon,
@@ -499,7 +498,7 @@ function ModeButton({
       type='button'
       data-active={active ? 'true' : 'false'}
       onClick={onClick}
-      className='flex h-7 cursor-pointer items-center justify-center gap-1 rounded-md border border-border bg-background px-2 text-[11px] font-medium text-muted-foreground transition-colors data-[active=true]:border-primary/50 data-[active=true]:bg-primary/10 data-[active=true]:text-primary hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none'
+      className='flex h-7 cursor-pointer items-center justify-center gap-1 rounded-md border border-border bg-background px-2 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none data-[active=true]:border-primary/50 data-[active=true]:bg-primary/10 data-[active=true]:text-primary'
     >
       <Icon className='size-3.5' />
       <span>{label}</span>
@@ -523,7 +522,7 @@ function ResultButton({
       type='button'
       data-active={active ? 'true' : 'false'}
       onClick={() => onClick(mode)}
-      className='h-6 cursor-pointer rounded px-2 text-[10px] font-semibold text-muted-foreground uppercase transition-colors data-[active=true]:bg-primary data-[active=true]:text-primary-foreground hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none'
+      className='h-6 cursor-pointer rounded px-2 text-[10px] font-semibold text-muted-foreground uppercase transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none data-[active=true]:bg-primary data-[active=true]:text-primary-foreground'
     >
       {label}
     </button>
@@ -551,46 +550,13 @@ function StatusPill({ status, label }: { status: WorkflowStatus; label: string }
 }
 
 function WorkflowTrace({ workflow }: { workflow: TextWorkflow }) {
-  const fontTrace = workflow.fontTrace
-  const selectedFont = fontTrace?.selectedFont
-  const primaryCategory = formatFontCategory(fontTrace?.primaryCategory)
-  const secondaryCategory = formatFontCategory(fontTrace?.secondaryCategory)
-  const candidateFonts = fontTrace?.candidateFonts?.filter(Boolean).slice(0, 6) ?? []
-  const fontNotes = fontTrace?.notes?.filter(Boolean).slice(0, 3) ?? []
   const repairModel = workflow.repairTrace?.model
   const repairError = workflow.repairTrace?.error
-  if (
-    !selectedFont &&
-    !primaryCategory &&
-    !secondaryCategory &&
-    candidateFonts.length === 0 &&
-    fontNotes.length === 0 &&
-    !repairModel &&
-    !repairError
-  ) {
+  if (!repairModel && !repairError) {
     return null
   }
   return (
     <div className='space-y-1 rounded-md border border-border/60 bg-background/70 p-1.5 text-[10px] text-muted-foreground'>
-      {(selectedFont || primaryCategory || secondaryCategory || candidateFonts.length > 0) && (
-        <div className='flex items-center gap-1'>
-          <SparklesIcon className='size-3 text-primary' />
-          <span className='truncate'>
-            字体:
-            {primaryCategory && <span> {primaryCategory}</span>}
-            {secondaryCategory && <span> / {secondaryCategory}</span>}
-            {selectedFont && <span>{` -> ${selectedFont}`}</span>}
-          </span>
-        </div>
-      )}
-      {candidateFonts.length > 0 && (
-        <div className='truncate pl-4'>候选: {candidateFonts.join(' / ')}</div>
-      )}
-      {fontNotes.map((note) => (
-        <div key={note} className='truncate pl-4'>
-          {note}
-        </div>
-      ))}
       {repairModel && (
         <div className='flex items-center gap-1'>
           <BandageIcon className='size-3 text-primary' />
@@ -605,23 +571,4 @@ function WorkflowTrace({ workflow }: { workflow: TextWorkflow }) {
       )}
     </div>
   )
-}
-
-function formatFontCategory(value?: string | null): string | null {
-  switch (value) {
-    case 'serif':
-      return '有衬线'
-    case 'sans_serif':
-      return '无衬线'
-    case 'gothic':
-      return '黑体'
-    case 'round':
-      return '圆体'
-    case 'mincho':
-      return '宋体'
-    case 'kai':
-      return '楷体'
-    default:
-      return value?.trim() || null
-  }
 }

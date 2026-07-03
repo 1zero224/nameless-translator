@@ -2,6 +2,7 @@
 
 import * as ScrollAreaPrimitive from '@radix-ui/react-scroll-area'
 import { useGesture } from '@use-gesture/react'
+import { CheckIcon, XIcon } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef } from 'react'
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
@@ -26,6 +27,7 @@ import {
   ContextMenuItem,
   ContextMenuTrigger,
 } from '@/components/ui/context-menu'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useBlobData } from '@/hooks/useBlobData'
 import { useBlockContextMenu } from '@/hooks/useBlockContextMenu'
 import { useBlockDrafting } from '@/hooks/useBlockDrafting'
@@ -430,6 +432,12 @@ export function Workspace() {
                             <RepairLayerImage key={layer.id} layer={layer} />
                           ))}
                       </div>
+                      {brushBlockDrawing.hasDraft && (
+                        <BrushBlockDraftActions
+                          onConfirm={() => void brushBlockDrawing.finalize()}
+                          onCancel={brushBlockDrawing.reset}
+                        />
+                      )}
                       {draftBlock && (
                         <div
                           className='pointer-events-none absolute rounded-md border-2 border-dashed border-primary bg-primary/10'
@@ -474,6 +482,50 @@ export function Workspace() {
           </ScrollAreaPrimitive.Scrollbar>
         </ScrollAreaPrimitive.Root>
       </div>
+    </div>
+  )
+}
+
+function BrushBlockDraftActions({
+  onConfirm,
+  onCancel,
+}: {
+  onConfirm: () => void
+  onCancel: () => void
+}) {
+  return (
+    <div
+      data-testid='workspace-brush-block-actions'
+      className='absolute top-3 left-1/2 z-50 flex -translate-x-1/2 items-center gap-1 rounded-md border border-border bg-card/95 p-1 shadow-lg'
+    >
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <button
+            type='button'
+            data-testid='workspace-brush-block-confirm'
+            aria-label='创建画笔选区'
+            onClick={onConfirm}
+            className='flex size-7 cursor-pointer items-center justify-center rounded bg-primary text-primary-foreground transition-colors hover:bg-primary/90 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none'
+          >
+            <CheckIcon className='size-4' />
+          </button>
+        </TooltipTrigger>
+        <TooltipContent>创建画笔选区</TooltipContent>
+      </Tooltip>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <button
+            type='button'
+            data-testid='workspace-brush-block-cancel'
+            aria-label='取消画笔选区'
+            onClick={onCancel}
+            className='flex size-7 cursor-pointer items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none'
+          >
+            <XIcon className='size-4' />
+          </button>
+        </TooltipTrigger>
+        <TooltipContent>取消画笔选区</TooltipContent>
+      </Tooltip>
     </div>
   )
 }

@@ -35,6 +35,66 @@ function sceneWithRotatedTextBlock(): SceneSnapshot {
   }
 }
 
+function sceneWithShapedTextBlocks(): SceneSnapshot {
+  return {
+    epoch: 1,
+    scene: {
+      project: { name: 'P' } as never,
+      pages: {
+        p1: {
+          id: 'p1',
+          name: 'P1',
+          width: 200,
+          height: 200,
+          nodes: {
+            polygon: {
+              id: 'polygon',
+              transform: { x: 20, y: 10, width: 80, height: 70, rotationDeg: 0 },
+              visible: true,
+              kind: {
+                text: {
+                  workflow: {
+                    modes: ['repair'],
+                    resultMode: 'repair',
+                    selection: {
+                      shapes: [
+                        {
+                          kind: 'polygon',
+                          points: [
+                            [20, 10],
+                            [100, 25],
+                            [70, 80],
+                          ],
+                        },
+                      ],
+                    },
+                  },
+                },
+              },
+            },
+            brush: {
+              id: 'brush',
+              transform: { x: 8, y: 14, width: 40, height: 30, rotationDeg: 0 },
+              visible: true,
+              kind: {
+                text: {
+                  workflow: {
+                    modes: ['repair'],
+                    resultMode: 'repair',
+                    selection: {
+                      shapes: [{ kind: 'brush', mask: 'brush-mask-hash' }],
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    } as never,
+  }
+}
+
 describe('TextBlockLayer', () => {
   beforeEach(() => {
     queryClient.setQueryData(getGetSceneJsonQueryKey(), sceneWithRotatedTextBlock())
@@ -50,5 +110,15 @@ describe('TextBlockLayer', () => {
       transform: 'translate(20px, 30px) rotate(30deg)',
     })
     expect(screen.getByTestId('text-block-rotate-t1')).toBeInTheDocument()
+  })
+
+  it('renders polygon and brush selections as shaped overlays instead of only rectangles', () => {
+    queryClient.setQueryData(getGetSceneJsonQueryKey(), sceneWithShapedTextBlocks())
+    useSelectionStore.getState().selectMany(['polygon', 'brush'])
+
+    renderWithQuery(<TextBlockLayer scale={1} />)
+
+    expect(screen.getByTestId('text-block-selection-polygon')).toBeInTheDocument()
+    expect(screen.getByTestId('text-block-selection-brush')).toBeInTheDocument()
   })
 })
