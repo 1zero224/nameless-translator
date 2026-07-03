@@ -48,6 +48,7 @@ pub struct RenderBlockInput {
     pub source_direction: Option<TextDirection>,
     pub rendered_direction: Option<TextDirection>,
     pub lock_layout_box: bool,
+    pub include_in_final_render: bool,
 }
 
 /// Document-level render options (shared across all blocks).
@@ -196,17 +197,8 @@ impl Renderer {
             }
         }
 
-        // Compose the final page: inpainted → brush → per-block sprites.
-        let mut canvas = inpainted.to_rgba8();
-        if let Some(brush) = brush_layer {
-            imageops::overlay(&mut canvas, &brush.to_rgba8(), 0, 0);
-        }
-        for out in &rendered_blocks {
-            let (x, y) = placement_origin(find_input(blocks, out.node_id), &out.expanded_transform);
-            imageops::overlay(&mut canvas, &out.sprite.to_rgba8(), x as i64, y as i64);
-        }
         Ok(RenderOutput {
-            final_render: DynamicImage::ImageRgba8(canvas),
+            final_render: compose_final_render(inpainted, brush_layer, blocks, &rendered_blocks),
             blocks: rendered_blocks,
         })
     }
@@ -1010,6 +1002,27 @@ fn placement_origin(input: &RenderBlockInput, expanded: &Option<Transform>) -> (
     }
 }
 
+fn compose_final_render(
+    inpainted: &DynamicImage,
+    brush_layer: Option<&DynamicImage>,
+    blocks: &[RenderBlockInput],
+    rendered_blocks: &[RenderedBlock],
+) -> DynamicImage {
+    let mut canvas = inpainted.to_rgba8();
+    if let Some(brush) = brush_layer {
+        imageops::overlay(&mut canvas, &brush.to_rgba8(), 0, 0);
+    }
+    for out in rendered_blocks {
+        let input = find_input(blocks, out.node_id);
+        if !input.include_in_final_render {
+            continue;
+        }
+        let (x, y) = placement_origin(input, &out.expanded_transform);
+        imageops::overlay(&mut canvas, &out.sprite.to_rgba8(), x as i64, y as i64);
+    }
+    DynamicImage::ImageRgba8(canvas)
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -1201,6 +1214,41 @@ mod tests {
     }
 
     #[test]
+    fn final_render_omits_blocks_marked_out_of_composite() {
+        let mut hidden = block(0.0, 0.0, 2.0, 2.0, "hidden");
+        hidden.include_in_final_render = false;
+        let mut visible = block(2.0, 0.0, 2.0, 2.0, "visible");
+        visible.include_in_final_render = true;
+        let hidden_sprite =
+            DynamicImage::ImageRgba8(RgbaImage::from_pixel(2, 2, Rgba([255, 0, 0, 255])));
+        let visible_sprite =
+            DynamicImage::ImageRgba8(RgbaImage::from_pixel(2, 2, Rgba([0, 0, 255, 255])));
+        let rendered_blocks = vec![
+            RenderedBlock {
+                node_id: hidden.node_id,
+                sprite: hidden_sprite,
+                rendered_direction: TextDirection::Horizontal,
+                expanded_transform: None,
+            },
+            RenderedBlock {
+                node_id: visible.node_id,
+                sprite: visible_sprite,
+                rendered_direction: TextDirection::Horizontal,
+                expanded_transform: None,
+            },
+        ];
+        let base =
+            DynamicImage::ImageRgba8(RgbaImage::from_pixel(4, 2, Rgba([250, 250, 250, 255])));
+
+        let final_render = compose_final_render(&base, None, &[hidden, visible], &rendered_blocks);
+        let final_rgba = final_render.to_rgba8();
+
+        assert_eq!(final_rgba.get_pixel(0, 0).0, [250, 250, 250, 255]);
+        assert_eq!(final_rgba.get_pixel(2, 0).0, [0, 0, 255, 255]);
+        assert_eq!(rendered_blocks.len(), 2);
+    }
+
+    #[test]
     fn mask_collision_detects_alpha_outside_matched_bubble() {
         let mut mask = GrayImage::from_pixel(10, 10, Luma([0u8]));
         paint_rect(&mut mask, 2, 2, 8, 8, 1);
@@ -1262,6 +1310,7 @@ mod tests {
             source_direction: None,
             rendered_direction: None,
             lock_layout_box: false,
+            include_in_final_render: true,
         }
     }
 

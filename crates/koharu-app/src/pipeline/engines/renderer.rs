@@ -11,7 +11,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use koharu_core::{
     ImageRole, MaskRole, NodeDataPatch, NodePatch, Op, TextData, TextDataPatch, TextResultMode,
-    TextStyle, Transform, WorkflowStatus,
+    TextStyle, TextWorkflowMode, Transform, WorkflowStatus,
 };
 use koharu_llm::Language;
 
@@ -69,6 +69,7 @@ impl Engine for Model {
                     source_direction: t.source_direction,
                     rendered_direction: t.rendered_direction,
                     lock_layout_box: t.lock_layout_box,
+                    include_in_final_render: should_composite_text_node(t),
                 })
             })
             .collect();
@@ -192,7 +193,12 @@ fn preserve_existing_style(existing: Option<TextStyle>) -> Option<Option<TextSty
 }
 
 fn should_render_text_node(text: &TextData) -> bool {
-    text.workflow.result_mode != TextResultMode::Repair
+    text.workflow.modes.contains(&TextWorkflowMode::Lettering)
+}
+
+fn should_composite_text_node(text: &TextData) -> bool {
+    !(text.workflow.result_mode == TextResultMode::Repair
+        && text.workflow.modes.contains(&TextWorkflowMode::Repair))
 }
 
 fn render_target_language_tag(value: &str) -> String {
@@ -203,7 +209,10 @@ fn render_target_language_tag(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{preserve_existing_style, render_target_language_tag, should_render_text_node};
+    use super::{
+        preserve_existing_style, render_target_language_tag, should_composite_text_node,
+        should_render_text_node,
+    };
     use koharu_core::{TextData, TextResultMode, TextStyle, TextWorkflow, TextWorkflowMode};
 
     #[test]
@@ -244,7 +253,7 @@ mod tests {
     }
 
     #[test]
-    fn skips_lettering_sprite_when_current_result_mode_is_repair() {
+    fn renders_lettering_sprite_when_current_result_mode_is_repair() {
         let text = TextData {
             translation: Some("translated".to_string()),
             workflow: TextWorkflow {
@@ -255,7 +264,22 @@ mod tests {
             ..Default::default()
         };
 
-        assert!(!should_render_text_node(&text));
+        assert!(should_render_text_node(&text));
+    }
+
+    #[test]
+    fn skips_repair_result_mode_in_final_composite() {
+        let text = TextData {
+            translation: Some("translated".to_string()),
+            workflow: TextWorkflow {
+                modes: vec![TextWorkflowMode::Lettering, TextWorkflowMode::Repair],
+                result_mode: TextResultMode::Repair,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        assert!(!should_composite_text_node(&text));
     }
 
     #[test]
@@ -271,5 +295,6 @@ mod tests {
         };
 
         assert!(should_render_text_node(&text));
+        assert!(should_composite_text_node(&text));
     }
 }
