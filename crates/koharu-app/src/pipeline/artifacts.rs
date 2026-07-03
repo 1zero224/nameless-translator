@@ -57,20 +57,24 @@ impl Artifact {
             Artifact::OcrText => every_text(page, |t| {
                 t.text.as_ref().is_some_and(|s| !s.trim().is_empty())
             }),
-            Artifact::FontPredictions => every_text(page, |t| t.font_prediction.is_some()),
-            Artifact::Translations => every_text(page, |t| {
-                // A text node with no OCR text needs no translation either.
-                let has_ocr = t.text.as_ref().is_some_and(|s| !s.trim().is_empty());
-                if !has_ocr {
-                    return true;
-                }
+            Artifact::FontPredictions => every_text_matching(
+                page,
+                |t| has_workflow_mode(t, TextWorkflowMode::Lettering),
+                |t| t.font_prediction.is_some(),
+            ),
+            Artifact::Translations => every_text_matching(page, has_workflow_mode_any, |t| {
                 t.translation.as_ref().is_some_and(|s| !s.trim().is_empty())
             }),
-            Artifact::RenderedSprites => every_text(page, |t| t.sprite.is_some()),
-            Artifact::RepairLayers => every_text(page, |t| {
-                !t.workflow.modes.contains(&TextWorkflowMode::Repair)
-                    || t.workflow.repair_layer.is_some()
-            }),
+            Artifact::RenderedSprites => every_text_matching(
+                page,
+                |t| has_workflow_mode(t, TextWorkflowMode::Lettering),
+                |t| t.sprite.is_some(),
+            ),
+            Artifact::RepairLayers => every_text_matching(
+                page,
+                |t| has_workflow_mode(t, TextWorkflowMode::Repair),
+                |t| t.workflow.repair_layer.is_some(),
+            ),
             Artifact::FinalRender => has_image_role(page, ImageRole::Rendered),
         }
     }
@@ -104,4 +108,109 @@ fn every_text(page: &Page, predicate: impl Fn(&koharu_core::TextData) -> bool) -
         return true;
     }
     texts.into_iter().all(predicate)
+}
+
+fn every_text_matching(
+    page: &Page,
+    relevant: impl Fn(&koharu_core::TextData) -> bool,
+    predicate: impl Fn(&koharu_core::TextData) -> bool,
+) -> bool {
+    every_text(page, |text| !relevant(text) || predicate(text))
+}
+
+fn has_workflow_mode(text: &koharu_core::TextData, mode: TextWorkflowMode) -> bool {
+    text.workflow.modes.contains(&mode)
+}
+
+fn has_workflow_mode_any(text: &koharu_core::TextData) -> bool {
+    has_workflow_mode(text, TextWorkflowMode::Lettering)
+        || has_workflow_mode(text, TextWorkflowMode::Repair)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use koharu_core::{BlobRef, FontPrediction, Node, NodeId, TextData, TextWorkflow, Transform};
+
+    #[test]
+    fn font_predictions_ignore_repair_only_text_blocks() {
+        let page = page_with_texts([
+            text_node(
+                TextWorkflow {
+                    modes: vec![TextWorkflowMode::Lettering],
+                    ..Default::default()
+                },
+                |text| text.font_prediction = Some(FontPrediction::default()),
+            ),
+            text_node(
+                TextWorkflow {
+                    modes: vec![TextWorkflowMode::Repair],
+                    ..Default::default()
+                },
+                |_| {},
+            ),
+        ]);
+
+        assert!(Artifact::FontPredictions.ready(&page));
+    }
+
+    #[test]
+    fn rendered_sprites_ignore_repair_only_text_blocks() {
+        let page = page_with_texts([
+            text_node(
+                TextWorkflow {
+                    modes: vec![TextWorkflowMode::Lettering],
+                    ..Default::default()
+                },
+                |text| text.sprite = Some(BlobRef::new("sprite")),
+            ),
+            text_node(
+                TextWorkflow {
+                    modes: vec![TextWorkflowMode::Repair],
+                    ..Default::default()
+                },
+                |_| {},
+            ),
+        ]);
+
+        assert!(Artifact::RenderedSprites.ready(&page));
+    }
+
+    #[test]
+    fn translations_require_manual_repair_blocks_to_have_translation() {
+        let page = page_with_texts([text_node(
+            TextWorkflow {
+                modes: vec![TextWorkflowMode::Repair],
+                ..Default::default()
+            },
+            |text| {
+                text.text = None;
+                text.translation = None;
+            },
+        )]);
+
+        assert!(!Artifact::Translations.ready(&page));
+    }
+
+    fn page_with_texts<const N: usize>(nodes: [Node; N]) -> Page {
+        let mut page = Page::new("p1", 100, 100);
+        for node in nodes {
+            page.nodes.insert(node.id, node);
+        }
+        page
+    }
+
+    fn text_node(workflow: TextWorkflow, update: impl FnOnce(&mut TextData)) -> Node {
+        let mut text = TextData {
+            workflow,
+            ..Default::default()
+        };
+        update(&mut text);
+        Node {
+            id: NodeId::new(),
+            transform: Transform::default(),
+            visible: true,
+            kind: NodeKind::Text(text),
+        }
+    }
 }
