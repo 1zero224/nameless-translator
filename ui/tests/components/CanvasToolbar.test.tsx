@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { CanvasToolbar } from '@/components/canvas/CanvasToolbar'
 import { queryClient } from '@/lib/queryClient'
 import { useJobsStore } from '@/lib/stores/jobsStore'
+import { useSelectionStore } from '@/lib/stores/selectionStore'
 
 import { renderWithQuery } from '../helpers'
 import { server } from '../msw/server'
@@ -124,6 +125,44 @@ describe('CanvasToolbar automation plan', () => {
   beforeEach(() => {
     queryClient.clear()
     useJobsStore.getState().clear()
+    useSelectionStore.getState().setPage(null)
+  })
+
+  it('runs native text and bubble detection without font detection', async () => {
+    const pipelineRequests: unknown[] = []
+    server.use(
+      http.get('/api/v1/scene.json', () =>
+        HttpResponse.json({
+          epoch: 1,
+          scene: { project: { name: 'Detect' }, pages: {} },
+        }),
+      ),
+      http.get('/api/v1/config', () =>
+        HttpResponse.json({
+          pipeline: {
+            detector: 'text-detector',
+            segmenter: 'text-segmenter',
+            bubble_segmenter: 'bubble-segmenter',
+            font_detector: 'font-detector',
+          },
+        }),
+      ),
+      http.post('/api/v1/pipelines', async ({ request }) => {
+        pipelineRequests.push(await request.json())
+        return HttpResponse.json({ operationId: 'op-detect' })
+      }),
+    )
+    useSelectionStore.getState().setPage('p1')
+
+    renderWithQuery(<CanvasToolbar />)
+
+    await userEvent.click(await screen.findByTestId('toolbar-detect'))
+
+    await waitFor(() => expect(pipelineRequests).toHaveLength(1))
+    expect(pipelineRequests[0]).toMatchObject({
+      steps: ['text-detector', 'text-segmenter', 'bubble-segmenter'],
+      pages: ['p1'],
+    })
   })
 
   it('disables project automation and explains missing engines', async () => {

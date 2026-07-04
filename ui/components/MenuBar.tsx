@@ -91,7 +91,6 @@ export function MenuBar() {
       p.detector,
       p.segmenter,
       p.bubble_segmenter,
-      p.font_detector,
       p.ocr,
       p.translator,
       p.inpainter,
@@ -121,9 +120,7 @@ export function MenuBar() {
     const p = cfg.pipeline
     const prefs = usePreferencesStore.getState()
     const steps = [
-      ...(prefs.customPipeline.detect
-        ? [p.detector, p.segmenter, p.bubble_segmenter, p.font_detector]
-        : []),
+      ...(prefs.customPipeline.detect ? [p.detector, p.segmenter, p.bubble_segmenter] : []),
       prefs.customPipeline.ocr ? p.ocr : null,
       prefs.customPipeline.translator ? p.translator : null,
       prefs.customPipeline.inpainter ? p.inpainter : null,

@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { MenuBar } from '@/components/MenuBar'
 import { getGetConfigQueryKey, getGetSceneJsonQueryKey } from '@/lib/api/default/default'
 import { queryClient } from '@/lib/queryClient'
+import { usePreferencesStore } from '@/lib/stores/preferencesStore'
 
 import { renderWithQuery } from '../helpers'
 import { server } from '../msw/server'
@@ -18,6 +19,7 @@ vi.mock('@/lib/io/openFiles', () => ({
 
 beforeEach(() => {
   // Default: config + scene exist so the menu enables scene-dependent items.
+  usePreferencesStore.getState().resetPreferences()
   server.use(
     http.get('/api/v1/scene.json', () =>
       HttpResponse.json({
@@ -39,6 +41,85 @@ describe('MenuBar', () => {
     renderWithQuery(<MenuBar />)
     expect(screen.getByTestId('menu-file-trigger')).toBeInTheDocument()
     expect(screen.getByTestId('menu-process-trigger')).toBeInTheDocument()
+  })
+
+  it('runs standard processing without font detection outside project automation', async () => {
+    const pipelineRequests: unknown[] = []
+    server.use(
+      http.get('/api/v1/config', () =>
+        HttpResponse.json({
+          pipeline: {
+            detector: 'text-detector',
+            segmenter: 'text-segmenter',
+            bubble_segmenter: 'bubble-segmenter',
+            font_detector: 'font-detector',
+            ocr: 'ocr',
+            translator: 'translator',
+            inpainter: 'inpainter',
+            renderer: 'renderer',
+          },
+        }),
+      ),
+      http.post('/api/v1/pipelines', async ({ request }) => {
+        pipelineRequests.push(await request.json())
+        return HttpResponse.json({ operationId: 'op-process' })
+      }),
+    )
+
+    renderWithQuery(<MenuBar />)
+
+    await userEvent.click(screen.getByTestId('menu-process-trigger'))
+    await userEvent.click(await screen.findByTestId('menu-process-all'))
+
+    await waitFor(() => expect(pipelineRequests).toHaveLength(1))
+    expect(pipelineRequests[0]).toMatchObject({
+      steps: [
+        'text-detector',
+        'text-segmenter',
+        'bubble-segmenter',
+        'ocr',
+        'translator',
+        'inpainter',
+        'renderer',
+      ],
+    })
+  })
+
+  it('runs custom detect without font detection outside project automation', async () => {
+    const pipelineRequests: unknown[] = []
+    usePreferencesStore.getState().setCustomPipeline({
+      detect: true,
+      ocr: false,
+      translator: false,
+      inpainter: false,
+      renderer: false,
+    })
+    server.use(
+      http.get('/api/v1/config', () =>
+        HttpResponse.json({
+          pipeline: {
+            detector: 'text-detector',
+            segmenter: 'text-segmenter',
+            bubble_segmenter: 'bubble-segmenter',
+            font_detector: 'font-detector',
+          },
+        }),
+      ),
+      http.post('/api/v1/pipelines', async ({ request }) => {
+        pipelineRequests.push(await request.json())
+        return HttpResponse.json({ operationId: 'op-custom-detect' })
+      }),
+    )
+
+    renderWithQuery(<MenuBar />)
+
+    await userEvent.click(screen.getByTestId('menu-process-trigger'))
+    await userEvent.click(await screen.findByText('menu.runCustomAll'))
+
+    await waitFor(() => expect(pipelineRequests).toHaveLength(1))
+    expect(pipelineRequests[0]).toMatchObject({
+      steps: ['text-detector', 'text-segmenter', 'bubble-segmenter'],
+    })
   })
 
   it('Close Project calls DELETE /projects/current and invalidates scene', async () => {

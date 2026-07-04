@@ -151,11 +151,9 @@ function WorkflowButtons() {
    * the Rust `PipelineConfig`, so we trust what the server returns and
    * never hard-code fallbacks here.
    *
-   * Detect is the only multi-engine button; it bundles detector +
-   * segmenter + font-detector so the subsequent single-engine steps
-   * (OCR / Inpaint / Render) find their inputs already on the page. The
-   * Project automation lives in the right-side control group; these buttons
-   * stay page-scoped and report only their own active step.
+   * Detect is the only multi-engine button. It runs native text/bubble
+   * detection only; font detection belongs to project automation where it
+   * can see workflow modes and translations.
    */
   const runStep = async (
     pick: (p: NonNullable<Awaited<ReturnType<typeof getConfig>>['pipeline']>) => string[],
@@ -184,7 +182,6 @@ function WorkflowButtons() {
     p.detector!,
     p.segmenter!,
     p.bubble_segmenter!,
-    p.font_detector!,
   ]
   const ocrChain: PipelinePick = (p) => [p.ocr!]
   const translateChain: PipelinePick = (p) => [p.translator!]
