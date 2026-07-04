@@ -191,41 +191,41 @@ pub(super) fn default_font_policy(
         .map(str::to_string)
         .or_else(|| fonts.first().map(|font| font.post_script_name.clone()))
         .unwrap_or_else(|| "ArialMT".to_string());
-    let mut buckets = Default::default();
-    buckets.insert(
+    let mut policy = FontPolicy {
+        buckets: Default::default(),
+        fallback_font: Some(fallback.clone()),
+    };
+    policy.buckets.insert(
         "body".to_string(),
         FontBucket {
             fonts: unique_fonts([Some(fallback.clone()), first_by_secondary(fonts, "gothic")]),
         },
     );
-    buckets.insert(
+    policy.buckets.insert(
         "round".to_string(),
         FontBucket {
             fonts: unique_fonts([first_by_secondary(fonts, "round"), Some(fallback.clone())]),
         },
     );
-    buckets.insert(
+    policy.buckets.insert(
         "mincho".to_string(),
         FontBucket {
             fonts: unique_fonts([first_by_secondary(fonts, "mincho"), Some(fallback.clone())]),
         },
     );
-    buckets.insert(
+    policy.buckets.insert(
         "display".to_string(),
         FontBucket {
             fonts: unique_fonts([first_by_secondary(fonts, "gothic"), Some(fallback.clone())]),
         },
     );
-    buckets.insert(
+    policy.buckets.insert(
         "review".to_string(),
         FontBucket {
             fonts: vec![fallback.clone()],
         },
     );
-    FontPolicy {
-        buckets,
-        fallback_font: Some(fallback),
-    }
+    policy
 }
 
 pub(super) fn apply_font_profile(
