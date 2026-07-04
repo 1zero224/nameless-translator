@@ -95,6 +95,32 @@ async fn pipeline_with_unknown_step_fails_fast() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
+async fn pipeline_start_rejects_when_another_pipeline_is_running() -> anyhow::Result<()> {
+    let app = TestApp::spawn().await?;
+    app.open_fresh_project("pipeline-lock").await?;
+
+    let _guard = app.app.pipeline_lock.clone().lock_owned().await;
+    let resp = app
+        .client_config
+        .client
+        .post(format!("{}/pipelines", app.base_url))
+        .json(&serde_json::json!({ "steps": ["koharu-renderer"] }))
+        .send()
+        .await?;
+
+    assert_eq!(resp.status(), reqwest::StatusCode::CONFLICT);
+    let body: serde_json::Value = resp.json().await?;
+    assert!(
+        body["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("pipeline already running")),
+        "unexpected error body: {body:?}",
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn cancel_operation_accepts_unknown_id() -> anyhow::Result<()> {
     let app = TestApp::spawn().await?;
     // Best-effort: cancelling an unknown operation is a no-op 204.
@@ -202,6 +228,46 @@ async fn renderer_pipeline_creates_final_render_for_pages_without_text_blocks() 
         names.iter().all(|name| name.ends_with(".png")),
         "rendered export entries should be PNGs: {names:?}",
     );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn operations_snapshot_includes_latest_pipeline_progress() -> anyhow::Result<()> {
+    let app = TestApp::spawn().await?;
+    app.open_fresh_project("operations-progress").await?;
+
+    let png = TestApp::tiny_png(24, 24, [255, 255, 255, 255]);
+    import_pages(&app, vec![("a.png", png)]).await?;
+
+    let resp = api::start_pipeline(
+        &app.client_config,
+        empty_pipeline_request(vec!["koharu-renderer".into()]),
+    )
+    .await?;
+    let job = wait_for_job(&app, &resp.operation_id).await?;
+    assert_eq!(job.status, JobStatus::Completed);
+
+    let operations: serde_json::Value = app
+        .client_config
+        .client
+        .get(format!("{}/operations", app.base_url))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    let operation = operations["operations"]
+        .as_array()
+        .and_then(|items| {
+            items
+                .iter()
+                .find(|item| item["id"].as_str() == Some(resp.operation_id.as_str()))
+        })
+        .expect("pipeline operation should be listed");
+
+    assert_eq!(operation["progress"]["jobId"], resp.operation_id);
+    assert_eq!(operation["progress"]["overallPercent"], 100);
 
     Ok(())
 }

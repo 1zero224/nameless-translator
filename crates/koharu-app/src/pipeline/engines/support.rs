@@ -666,8 +666,37 @@ pub fn inpainted_image_ops(
 
 /// Replace or add a `Mask { role }` blob for `page`.
 pub fn upsert_mask_blob(scene: &Scene, page: PageId, role: MaskRole, blob: BlobRef) -> Op {
-    if let Some((node_id, _)) = find_mask_node(scene, page, role) {
-        Op::UpdateNode {
+    let Some(page_ref) = scene.page(page) else {
+        return add_mask_node_op(
+            page,
+            role,
+            blob,
+            Transform::default(),
+            matches!(role, MaskRole::BrushInpaint),
+            0,
+        );
+    };
+    let mut matches = page_ref
+        .nodes
+        .iter()
+        .enumerate()
+        .filter_map(|(index, (id, node))| match &node.kind {
+            NodeKind::Mask(mask) if mask.role == role => Some((*id, node.clone(), index)),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+
+    if let Some((node_id, _, _)) = matches.first().cloned() {
+        let mut ops = Vec::new();
+        for (id, node, index) in matches.drain(1..).rev() {
+            ops.push(Op::RemoveNode {
+                page,
+                id,
+                prev_node: node,
+                prev_index: index,
+            });
+        }
+        ops.push(Op::UpdateNode {
             page,
             id: node_id,
             patch: koharu_core::NodePatch {
@@ -678,11 +707,25 @@ pub fn upsert_mask_blob(scene: &Scene, page: PageId, role: MaskRole, blob: BlobR
                 visible: None,
             },
             prev: koharu_core::NodePatch::default(),
+        });
+        if ops.len() == 1 {
+            ops.remove(0)
+        } else {
+            Op::Batch {
+                ops,
+                label: format!("Replace {role:?} mask"),
+            }
         }
     } else {
-        let at = scene.page(page).map(|p| p.nodes.len()).unwrap_or(0);
         let visible = matches!(role, MaskRole::BrushInpaint);
-        add_mask_node_op(page, role, blob, Transform::default(), visible, at)
+        add_mask_node_op(
+            page,
+            role,
+            blob,
+            Transform::default(),
+            visible,
+            page_ref.nodes.len(),
+        )
     }
 }
 
@@ -959,9 +1002,9 @@ mod tests {
     use super::*;
     use image::{Rgba, RgbaImage};
     use koharu_core::{
-        BlobRef, FontPrediction, ImageRole, NamedFontPrediction, NodeDataPatch, NodeId, NodeKind,
-        ReadingOrder, TextDirection, TextSelection, TextSelectionShape, TextWorkflow,
-        TextWorkflowMode,
+        BlobRef, FontPrediction, ImageRole, MaskData, MaskRole, NamedFontPrediction, NodeDataPatch,
+        NodeId, NodeKind, ReadingOrder, TextDirection, TextSelection, TextSelectionShape,
+        TextWorkflow, TextWorkflowMode,
     };
     use koharu_ml::types::TextRegion;
 
@@ -1187,6 +1230,52 @@ mod tests {
         assert_eq!(ops.len(), 1);
         assert!(matches!(ops[0], Op::AddNode { .. }));
         assert!(!ops.iter().any(|op| matches!(op, Op::UpdateNode { .. })));
+    }
+
+    #[test]
+    fn upsert_mask_blob_prunes_duplicate_role_masks() {
+        let page_id = PageId::new();
+        let keep_id = NodeId::new();
+        let duplicate_id = NodeId::new();
+        let mut scene = Scene::default();
+        let mut page = koharu_core::Page::new("p1", 100, 100);
+        page.id = page_id;
+        for (node_id, blob) in [
+            (keep_id, BlobRef::new("old-bubble-a")),
+            (duplicate_id, BlobRef::new("old-bubble-b")),
+        ] {
+            page.nodes.insert(
+                node_id,
+                Node {
+                    id: node_id,
+                    transform: Transform::default(),
+                    visible: false,
+                    kind: NodeKind::Mask(MaskData {
+                        role: MaskRole::Bubble,
+                        blob,
+                    }),
+                },
+            );
+        }
+        scene.pages.insert(page_id, page);
+
+        let new_blob = BlobRef::new("new-bubble");
+        let mut op = upsert_mask_blob(&scene, page_id, MaskRole::Bubble, new_blob.clone());
+        op.apply(&mut scene).expect("upsert duplicate bubble masks");
+
+        let page = scene.page(page_id).expect("page");
+        let bubble_masks: Vec<_> = page
+            .nodes
+            .values()
+            .filter_map(|node| match &node.kind {
+                NodeKind::Mask(mask) if mask.role == MaskRole::Bubble => Some(mask),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(bubble_masks.len(), 1);
+        assert_eq!(bubble_masks[0].blob, new_blob);
+        assert!(page.nodes.contains_key(&keep_id));
+        assert!(!page.nodes.contains_key(&duplicate_id));
     }
 
     #[test]

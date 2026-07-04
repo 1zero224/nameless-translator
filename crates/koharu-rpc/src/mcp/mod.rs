@@ -179,6 +179,11 @@ impl KoharuServer {
         let session = app
             .current_session()
             .ok_or_else(|| rmcp::ErrorData::invalid_request("no project open", None))?;
+        let pipeline_guard = app
+            .pipeline_lock
+            .clone()
+            .try_lock_owned()
+            .map_err(|_| rmcp::ErrorData::invalid_request("pipeline already running", None))?;
         let spec = PipelineSpec {
             scope: match input.pages {
                 Some(pages) => Scope::Pages(pages),
@@ -202,6 +207,7 @@ impl KoharuServer {
         let renderer = app.renderer.clone();
         let cpu = app.cpu_only();
         tokio::spawn(async move {
+            let _pipeline_guard = pipeline_guard;
             let _ = koharu_app::pipeline::run(
                 session, registry, runtime, cpu, llm, renderer, spec, cancel, None, None,
             )

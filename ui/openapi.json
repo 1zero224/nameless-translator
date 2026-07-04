@@ -1946,6 +1946,9 @@
           "kind": {
             "type": "string"
           },
+          "progress": {
+            "$ref": "#/components/schemas/PipelineProgress"
+          },
           "status": {
             "$ref": "#/components/schemas/JobStatus"
           }

@@ -6,7 +6,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { MenuBar } from '@/components/MenuBar'
 import { getGetConfigQueryKey, getGetSceneJsonQueryKey } from '@/lib/api/default/default'
 import { queryClient } from '@/lib/queryClient'
+import { useJobsStore } from '@/lib/stores/jobsStore'
 import { usePreferencesStore } from '@/lib/stores/preferencesStore'
+import { useSelectionStore } from '@/lib/stores/selectionStore'
 
 import { renderWithQuery } from '../helpers'
 import { server } from '../msw/server'
@@ -19,7 +21,9 @@ vi.mock('@/lib/io/openFiles', () => ({
 
 beforeEach(() => {
   // Default: config + scene exist so the menu enables scene-dependent items.
+  useJobsStore.getState().clear()
   usePreferencesStore.getState().resetPreferences()
+  useSelectionStore.getState().setPage(null)
   server.use(
     http.get('/api/v1/scene.json', () =>
       HttpResponse.json({
@@ -120,6 +124,30 @@ describe('MenuBar', () => {
     expect(pipelineRequests[0]).toMatchObject({
       steps: ['text-detector', 'text-segmenter', 'bubble-segmenter'],
     })
+  })
+
+  it('disables menu pipeline actions while a pipeline is running', async () => {
+    useSelectionStore.getState().setPage('p1')
+    usePreferencesStore.getState().setCustomPipeline({
+      detect: true,
+      ocr: false,
+      translator: false,
+      inpainter: false,
+      renderer: false,
+    })
+    useJobsStore.getState().started('running-pipeline', 'pipeline')
+
+    renderWithQuery(<MenuBar />)
+
+    await userEvent.click(screen.getByTestId('menu-process-trigger'))
+
+    expect(await screen.findByTestId('menu-process-current')).toHaveAttribute('data-disabled')
+    expect(await screen.findByTestId('menu-process-rerender')).toHaveAttribute('data-disabled')
+    expect(await screen.findByTestId('menu-process-all')).toHaveAttribute('data-disabled')
+    expect(await screen.findByTestId('menu-process-custom-current')).toHaveAttribute(
+      'data-disabled',
+    )
+    expect(await screen.findByTestId('menu-process-custom-all')).toHaveAttribute('data-disabled')
   })
 
   it('Close Project calls DELETE /projects/current and invalidates scene', async () => {

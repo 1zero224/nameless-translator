@@ -3,11 +3,13 @@
  * Do not edit manually.
  */
 import type { JobStatus } from './jobStatus';
+import type { PipelineProgress } from './pipelineProgress';
 
 export interface JobSummary {
   /** @nullable */
   error?: string | null;
   id: string;
   kind: string;
+  progress?: PipelineProgress;
   status: JobStatus;
 }

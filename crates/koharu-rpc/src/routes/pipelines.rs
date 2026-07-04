@@ -87,6 +87,11 @@ async fn start_pipeline(
     for id in &steps {
         pipeline::Registry::find(id).map_err(|e| ApiError::bad_request(format!("{e:#}")))?;
     }
+    let pipeline_guard = app
+        .pipeline_lock
+        .clone()
+        .try_lock_owned()
+        .map_err(|_| ApiError::conflict("pipeline already running"))?;
     let spec = PipelineSpec {
         scope: match req.pages {
             Some(pages) => Scope::Pages(pages),
@@ -113,6 +118,7 @@ async fn start_pipeline(
             kind: "pipeline".to_string(),
             status: JobStatus::Running,
             error: None,
+            progress: None,
         },
     );
     app.bus.publish(AppEvent::JobStarted {
@@ -131,9 +137,10 @@ async fn start_pipeline(
     let renderer_c = app.renderer.clone();
     let cpu = app.cpu_only();
     let progress_bus = app.bus.clone();
+    let progress_jobs = app.jobs.clone();
     let progress_op_id = operation_id.clone();
     let progress_sink: pipeline::ProgressSink = Arc::new(move |tick: ProgressTick| {
-        progress_bus.publish(AppEvent::JobProgress(PipelineProgress {
+        let progress = PipelineProgress {
             job_id: progress_op_id.clone(),
             status: PipelineStatus::Running,
             step: tick.step,
@@ -142,7 +149,23 @@ async fn start_pipeline(
             current_step_index: tick.step_index,
             total_steps: tick.total_steps,
             overall_percent: tick.overall_percent,
-        }));
+        };
+        if let Some(mut job) = progress_jobs.get_mut(&progress_op_id) {
+            job.status = JobStatus::Running;
+            job.progress = Some(progress.clone());
+        } else {
+            progress_jobs.insert(
+                progress_op_id.clone(),
+                JobSummary {
+                    id: progress_op_id.clone(),
+                    kind: "pipeline".to_string(),
+                    status: JobStatus::Running,
+                    error: None,
+                    progress: Some(progress.clone()),
+                },
+            );
+        }
+        progress_bus.publish(AppEvent::JobProgress(progress));
     });
     let warning_bus = app.bus.clone();
     let warning_op_id = operation_id.clone();
@@ -156,6 +179,7 @@ async fn start_pipeline(
         }));
     });
     tokio::spawn(async move {
+        let _pipeline_guard = pipeline_guard;
         let result = pipeline::run(
             session_c,
             registry_c,
@@ -184,6 +208,10 @@ async fn start_pipeline(
                 (JobStatus::Failed, Some(format!("{e:#}")))
             }
         };
+        let progress = app_c
+            .jobs
+            .get(&op_id_c)
+            .and_then(|job| job.progress.clone());
         app_c.jobs.insert(
             op_id_c.clone(),
             JobSummary {
@@ -191,6 +219,7 @@ async fn start_pipeline(
                 kind: "pipeline".to_string(),
                 status,
                 error: error.clone(),
+                progress,
             },
         );
         app_c.bus.publish(AppEvent::JobFinished(JobFinishedEvent {

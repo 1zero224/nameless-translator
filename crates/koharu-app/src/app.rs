@@ -42,6 +42,7 @@ pub struct AppSharedState {
     pub jobs: Arc<DashMap<String, JobSummary>>,
     pub downloads: Arc<DashMap<String, DownloadProgress>>,
     pub bus: Arc<EventBus>,
+    pub pipeline_lock: Arc<Mutex<()>>,
 }
 
 impl Default for AppSharedState {
@@ -50,6 +51,7 @@ impl Default for AppSharedState {
             jobs: Arc::new(DashMap::new()),
             downloads: Arc::new(DashMap::new()),
             bus: EventBus::new(EVENT_BUS_CAPACITY),
+            pipeline_lock: Arc::new(Mutex::new(())),
         }
     }
 }
@@ -63,6 +65,7 @@ pub struct App {
     pub jobs: Arc<DashMap<String, JobSummary>>,
     pub downloads: Arc<DashMap<String, DownloadProgress>>,
     pub bus: Arc<EventBus>,
+    pub pipeline_lock: Arc<Mutex<()>>,
     pub ai: Arc<AiManager>,
     pub llm: Arc<llm::Model>,
     pub renderer: Arc<renderer::Renderer>,
@@ -104,6 +107,7 @@ impl App {
             jobs: shared.jobs,
             downloads: shared.downloads,
             bus: shared.bus,
+            pipeline_lock: shared.pipeline_lock,
             ai,
             llm,
             renderer,

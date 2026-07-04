@@ -24,6 +24,8 @@ pub struct JobSummary {
     pub id: String,
     #[serde(rename = "kind")]
     pub kind: String,
+    #[serde(rename = "progress", skip_serializing_if = "Option::is_none")]
+    pub progress: Option<Box<models::PipelineProgress>>,
     #[serde(rename = "status")]
     pub status: models::JobStatus,
 }
@@ -34,6 +36,7 @@ impl JobSummary {
             error: None,
             id,
             kind,
+            progress: None,
             status,
         }
     }

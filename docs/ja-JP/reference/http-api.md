@@ -44,7 +44,7 @@ API はプロジェクト中心です。一度に開けるプロジェクトは 
 - `SceneSnapshot` — `{ epoch, scene }`
 - `LlmState` — 現在の LLM 読み込み状態 (status、target、error)
 - `LlmCatalog` — ローカルおよびプロバイダのモデルを family ごとにまとめたもの
-- `JobSummary` — `{ id, kind, status, error }`
+- `JobSummary` — `{ id, kind, status, error, progress }`
 - `DownloadProgress` — パッケージ id、バイト数、ステータス
 
 ## エンドポイント

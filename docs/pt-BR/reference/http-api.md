@@ -44,7 +44,7 @@ Tipos de response frequentemente usados incluem:
 - `SceneSnapshot` — `{ epoch, scene }`
 - `LlmState` — estado atual de carga do LLM (status, target, error)
 - `LlmCatalog` — modelos locais + de provedor agrupados por família
-- `JobSummary` — `{ id, kind, status, error }`
+- `JobSummary` — `{ id, kind, status, error, progress }`
 - `DownloadProgress` — id do pacote, contagens de bytes, status
 
 ## Endpoints

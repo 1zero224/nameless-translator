@@ -27,6 +27,7 @@ import { exportCurrentProjectAs, importPages } from '@/lib/io/pagesIo'
 import { closeProject, redoOp, selectAllTextNodesOnCurrentPage, undoOp } from '@/lib/io/scene'
 import { formatShortcutForDisplay, getPlatform } from '@/lib/shortcutUtils'
 import { useEditorUiStore } from '@/lib/stores/editorUiStore'
+import { useJobsStore } from '@/lib/stores/jobsStore'
 import { usePreferencesStore } from '@/lib/stores/preferencesStore'
 import { useSelectionStore } from '@/lib/stores/selectionStore'
 
@@ -68,6 +69,9 @@ export function MenuBar() {
   const [settingsTab, setSettingsTab] = useState<TabId>('appearance')
   const hasPage = useSelectionStore((s) => s.pageId !== null)
   const hasScene = useScene().scene !== null
+  const isPipelineRunning = useJobsStore((s) =>
+    Object.values(s.jobs).some((job) => job.kind === 'pipeline' && job.status === 'running'),
+  )
   const shortcuts = usePreferencesStore((state) => state.shortcuts)
   const customPipeline = usePreferencesStore((state) => state.customPipeline)
   const setCustomPipeline = usePreferencesStore((state) => state.setCustomPipeline)
@@ -311,7 +315,7 @@ export function MenuBar() {
             <MenubarItem
               data-testid='menu-process-current'
               className='text-[13px]'
-              disabled={!hasPage}
+              disabled={!hasPage || isPipelineRunning}
               onSelect={() => void runPipeline({ pageId: requirePageId() })}
             >
               {t('menu.processCurrent')}
@@ -319,7 +323,7 @@ export function MenuBar() {
             <MenubarItem
               data-testid='menu-process-rerender'
               className='text-[13px]'
-              disabled={!hasPage}
+              disabled={!hasPage || isPipelineRunning}
               onSelect={() => void runInpaint(requirePageId())}
             >
               {t('menu.redoInpaintRender')}
@@ -327,22 +331,24 @@ export function MenuBar() {
             <MenubarItem
               data-testid='menu-process-all'
               className='text-[13px]'
-              disabled={!hasScene}
+              disabled={!hasScene || isPipelineRunning}
               onSelect={() => void runPipeline({})}
             >
               {t('menu.processAll')}
             </MenubarItem>
             <MenubarSeparator />
             <MenubarItem
+              data-testid='menu-process-custom-current'
               className='text-[13px]'
-              disabled={!hasPage || !hasSelectedSteps}
+              disabled={!hasPage || !hasSelectedSteps || isPipelineRunning}
               onSelect={() => void runCustomPipeline({ pageId: requirePageId() })}
             >
               {t('menu.runCustomCurrent')}
             </MenubarItem>
             <MenubarItem
+              data-testid='menu-process-custom-all'
               className='text-[13px]'
-              disabled={!hasScene || !hasSelectedSteps}
+              disabled={!hasScene || !hasSelectedSteps || isPipelineRunning}
               onSelect={() => void runCustomPipeline({})}
             >
               {t('menu.runCustomAll')}

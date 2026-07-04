@@ -89,6 +89,7 @@ async fn start_codex_image_generation(
             kind: "ai".to_string(),
             status: JobStatus::Running,
             error: None,
+            progress: None,
         },
     );
     app.bus.publish(AppEvent::JobStarted {
@@ -119,6 +120,7 @@ async fn start_codex_image_generation(
                 kind: "ai".to_string(),
                 status,
                 error: error.clone(),
+                progress: None,
             },
         );
         app_c.bus.publish(AppEvent::JobFinished(JobFinishedEvent {

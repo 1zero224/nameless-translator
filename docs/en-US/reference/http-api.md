@@ -44,7 +44,7 @@ Frequently used response types include:
 - `SceneSnapshot` — `{ epoch, scene }`
 - `LlmState` — current LLM load state (status, target, error)
 - `LlmCatalog` — local + provider models grouped by family
-- `JobSummary` — `{ id, kind, status, error }`
+- `JobSummary` — `{ id, kind, status, error, progress }`
 - `DownloadProgress` — package id, byte counts, status
 
 ## Endpoints
