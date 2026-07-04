@@ -2,30 +2,29 @@ use std::sync::atomic::Ordering;
 
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
-use image::DynamicImage;
 use koharu_core::{
-    FontFaceInfo, NodeDataPatch, NodeId, NodePatch, Op, PageId, TextData, TextDataPatch, Transform,
+    NodeDataPatch, NodePatch, Op, ProjectMetaPatch, TextData, TextDataPatch, TextWorkflow,
 };
 use koharu_ml::font_detector::FontDetector;
 
 use crate::pipeline::artifacts::Artifact;
 use crate::pipeline::engine::{Engine, EngineCtx, EngineInfo};
 use crate::pipeline::engines::support::{lettering_text_nodes, load_source_image};
-use crate::renderer::Renderer;
 
 mod client;
 mod parsing;
+mod profile_policy;
 mod selection;
 mod taxonomy;
 mod trace;
 mod visuals;
 
 use client::{MimoFontClient, MimoFontConfig};
-use selection::choose_font_with_mimo;
-use trace::{
-    apply_outcome_to_prediction, fallback_outcome, ml_prediction_to_core,
-    normalize_font_prediction, style_with_font, workflow_with_mimo_trace,
+use profile_policy::{
+    FONT_EVIDENCE_TOP_K, FontEvidence, active_profile, apply_font_profile, build_auto_profile,
+    build_mimo_profile, default_font_policy, mark_profile_generation_fallback, merge_review_queue,
 };
+use trace::{ml_prediction_to_core, normalize_font_prediction};
 use visuals::crop_text;
 
 const MAX_CANDIDATES: usize = 8;
@@ -48,14 +47,40 @@ impl Engine for Model {
             .iter()
             .map(|(_, transform, _)| crop_text(&source, transform))
             .collect::<Vec<_>>();
-        let mut predictions = self.detector.inference(&crops, 1)?;
+        let mut predictions = self.detector.inference(&crops, FONT_EVIDENCE_TOP_K)?;
         predictions.iter_mut().for_each(normalize_font_prediction);
+        let predictions = predictions
+            .into_iter()
+            .map(ml_prediction_to_core)
+            .collect::<Vec<_>>();
 
         let fonts = ctx.renderer.available_fonts().unwrap_or_default();
-        let mut ops = Vec::with_capacity(texts.len());
-        for (((node_id, transform, text), crop), prediction) in
-            texts.iter().zip(crops.iter()).zip(predictions)
-        {
+        let evidence = texts
+            .iter()
+            .zip(predictions.iter())
+            .map(|((node_id, _, _), prediction)| FontEvidence {
+                block_id: *node_id,
+                prediction: prediction.clone(),
+            })
+            .collect::<Vec<_>>();
+        let mut project_style = ctx.scene.project.style.clone();
+        if project_style.font_policy.buckets.is_empty() {
+            project_style.font_policy = default_font_policy(
+                &fonts,
+                ctx.scene.project.style.default_font.as_deref(),
+                ctx.options.default_font.as_deref(),
+            );
+        }
+        if active_profile(&project_style).is_none() {
+            project_style.font_profile = Some(self.build_profile(&source, &evidence).await);
+        }
+        let profile = active_profile(&project_style)
+            .cloned()
+            .expect("profile exists after bootstrap");
+
+        let mut text_ops = Vec::with_capacity(texts.len());
+        let mut review_additions = Vec::new();
+        for ((node_id, _, text), prediction) in texts.iter().zip(predictions) {
             if ctx.cancel.load(Ordering::Relaxed) {
                 return Err(anyhow!("pipeline cancelled"));
             }
@@ -67,69 +92,77 @@ impl Engine for Model {
             {
                 continue;
             }
-            ops.push(
-                self.op_for_text(
-                    ctx.page,
-                    *node_id,
-                    ctx.renderer,
-                    crop,
-                    transform,
-                    text,
-                    prediction,
-                    &fonts,
-                )
-                .await?,
+
+            let application = apply_font_profile(
+                *node_id,
+                text,
+                &prediction,
+                &profile,
+                &project_style.font_policy,
+                &fonts,
             );
+            if let Some(item) = application.review_item {
+                review_additions.push(item);
+            }
+            text_ops.push(Op::UpdateNode {
+                page: ctx.page,
+                id: *node_id,
+                patch: NodePatch {
+                    data: Some(NodeDataPatch::Text(TextDataPatch {
+                        font_prediction: Some(Some(prediction)),
+                        style: application.style.map(Some),
+                        workflow: Some(workflow_with_trace(text, application.trace)),
+                        ..Default::default()
+                    })),
+                    transform: None,
+                    visible: None,
+                },
+                prev: NodePatch::default(),
+            });
         }
+
+        project_style.font_review_queue =
+            merge_review_queue(&project_style.font_review_queue, review_additions);
+        let mut ops = Vec::with_capacity(text_ops.len() + 1);
+        ops.push(Op::UpdateProjectMeta {
+            patch: ProjectMetaPatch {
+                style: Some(project_style),
+                ..Default::default()
+            },
+            prev: ProjectMetaPatch::default(),
+        });
+        ops.extend(text_ops);
         Ok(ops)
     }
 }
 
 impl Model {
-    async fn op_for_text(
+    async fn build_profile(
         &self,
-        page: PageId,
-        node_id: NodeId,
-        renderer: &Renderer,
-        crop: &DynamicImage,
-        transform: &Transform,
-        text: &TextData,
-        prediction: koharu_ml::types::FontPrediction,
-        fonts: &[FontFaceInfo],
-    ) -> Result<Op> {
-        let mut prediction = ml_prediction_to_core(prediction);
-        let outcome = if let Some(client) = &self.client {
-            choose_font_with_mimo(client, renderer, crop, transform, text, &prediction, fonts)
-                .await
-                .unwrap_or_else(|error| fallback_outcome(&prediction, error))
-        } else {
-            fallback_outcome(
-                &prediction,
-                anyhow!("MIMO configuration is missing; using YuzuMarker fallback"),
-            )
+        source: &image::DynamicImage,
+        evidence: &[FontEvidence],
+    ) -> koharu_core::FontStyleProfile {
+        let Some(client) = self.client.as_ref() else {
+            return build_auto_profile(evidence, "yuzumarker_bootstrap");
         };
-
-        apply_outcome_to_prediction(&mut prediction, &outcome);
-        let style = outcome
-            .selected
-            .as_ref()
-            .map(|candidate| style_with_font(text, candidate));
-        Ok(Op::UpdateNode {
-            page,
-            id: node_id,
-            patch: NodePatch {
-                data: Some(NodeDataPatch::Text(TextDataPatch {
-                    font_prediction: Some(Some(prediction)),
-                    style: style.map(Some),
-                    workflow: Some(workflow_with_mimo_trace(text, &outcome)),
-                    ..Default::default()
-                })),
-                transform: None,
-                visible: None,
-            },
-            prev: NodePatch::default(),
-        })
+        match build_mimo_profile(client, source, evidence).await {
+            Ok(profile) => profile,
+            Err(error) => {
+                let mut profile = build_auto_profile(evidence, "yuzumarker_bootstrap");
+                mark_profile_generation_fallback(
+                    &mut profile,
+                    format!("MIMO profile generation failed: {error:#}"),
+                );
+                profile
+            }
+        }
     }
+}
+
+fn workflow_with_trace(text: &TextData, trace: koharu_core::FontWorkflowTrace) -> TextWorkflow {
+    let mut workflow = text.workflow.clone();
+    workflow.font_trace = Some(trace);
+    workflow
 }
 
 inventory::submit! {

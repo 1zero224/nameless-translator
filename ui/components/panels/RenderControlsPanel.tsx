@@ -20,7 +20,6 @@ import { Input } from '@/components/ui/input'
 import {
   Select,
   SelectContent,
-  SelectItem,
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
@@ -36,12 +35,14 @@ import {
 import { fetchGoogleFont, useGetGoogleFontsCatalog, useListFonts } from '@/lib/api/default/default'
 import type {
   FontFaceInfo,
+  FontWorkflowTrace,
   FontPrediction,
   Op,
   TextAlign,
   TextShaderEffect,
   TextStrokeStyle,
   TextStyle,
+  TextWorkflow,
 } from '@/lib/api/schemas'
 import {
   findFontFace,
@@ -55,6 +56,7 @@ import { ops } from '@/lib/ops'
 import { useEditorUiStore } from '@/lib/stores/editorUiStore'
 import { usePreferencesStore } from '@/lib/stores/preferencesStore'
 import { cn } from '@/lib/utils'
+import { normalizeWorkflow } from '@/lib/workflow'
 
 const DEFAULT_COLOR: number[] = [0, 0, 0, 255]
 const DEFAULT_STROKE_COLOR: number[] = [255, 255, 255, 255]
@@ -118,6 +120,28 @@ const predictionColor = (prediction?: FontPrediction | null): number[] | undefin
   const tc = prediction?.textColor
   if (!tc || tc.length < 3) return undefined
   return [clampByte(tc[0]), clampByte(tc[1]), clampByte(tc[2]), 255]
+}
+
+const manualOverrideWorkflow = (
+  node: TextNodeEntry,
+  updates: Partial<TextStyle>,
+): TextWorkflow => {
+  const workflow = normalizeWorkflow(node.data)
+  const trace: FontWorkflowTrace = workflow.fontTrace ? { ...workflow.fontTrace } : {}
+  const notes = [...(trace.notes ?? [])]
+  if (!notes.includes('manual font/style override protected from automatic font policy')) {
+    notes.push('manual font/style override protected from automatic font policy')
+  }
+  return {
+    ...workflow,
+    fontTrace: {
+      ...trace,
+      selectedFont: updates.fontFamilies?.[0] ?? trace.selectedFont ?? null,
+      autoApplied: false,
+      manualOverride: true,
+      notes,
+    },
+  }
 }
 
 // Mirrors renderer precedence: explicit style color → predicted color → black.
@@ -294,7 +318,7 @@ export function RenderControlsPanel() {
       textAlign: updates.textAlign ?? current?.textAlign ?? null,
     }
     return ops.updateNode(page!.id, n.id, {
-      data: { text: { style: nextStyle } } as never,
+      data: { text: { style: nextStyle, workflow: manualOverrideWorkflow(n, updates) } } as never,
     })
   }
 

@@ -13,6 +13,8 @@ use crate::pipeline::engines::support::{
     lettering_text_nodes, load_source_image, workflow_with_font_trace,
 };
 
+const FONT_EVIDENCE_TOP_K: usize = 5;
+
 pub struct Model(FontDetector);
 
 #[async_trait]
@@ -35,7 +37,7 @@ impl Engine for Model {
             })
             .collect();
 
-        let mut preds = self.0.inference(&crops, 1)?;
+        let mut preds = self.0.inference(&crops, FONT_EVIDENCE_TOP_K)?;
         for p in &mut preds {
             normalize_font_prediction(p);
         }

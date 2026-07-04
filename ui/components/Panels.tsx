@@ -1,10 +1,17 @@
 'use client'
 
-import { LayersIcon, SlidersHorizontalIcon, SparklesIcon, TypeIcon } from 'lucide-react'
+import {
+  ClipboardCheckIcon,
+  LayersIcon,
+  SlidersHorizontalIcon,
+  SparklesIcon,
+  TypeIcon,
+} from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { AiPanel } from '@/components/panels/AiPanel'
+import { FontReviewPanel } from '@/components/panels/FontReviewPanel'
 import { LayersPanel } from '@/components/panels/LayersPanel'
 import { RenderControlsPanel } from '@/components/panels/RenderControlsPanel'
 import { TextBlocksPanel } from '@/components/panels/TextBlocksPanel'
@@ -73,22 +80,28 @@ export function Panels() {
         className='min-h-0 flex-1 gap-0'
         data-testid='panels-work-tabs'
       >
-        {codexSignedIn && (
-          <TabsList className='m-2 mb-0 grid w-[calc(100%-1rem)] grid-cols-2 bg-muted/70'>
-            <TabsTrigger value='text' data-testid='panels-tab-textblocks' className='gap-1'>
-              <TypeIcon className='size-3.5' />
-              <span className='text-xs font-semibold tracking-wide uppercase'>
-                {t('layers.textBlocks')}
-              </span>
-            </TabsTrigger>
+        <TabsList
+          className={`m-2 mb-0 grid w-[calc(100%-1rem)] ${codexSignedIn ? 'grid-cols-3' : 'grid-cols-2'} bg-muted/70`}
+        >
+          <TabsTrigger value='text' data-testid='panels-tab-textblocks' className='gap-1'>
+            <TypeIcon className='size-3.5' />
+            <span className='text-xs font-semibold tracking-wide uppercase'>
+              {t('layers.textBlocks')}
+            </span>
+          </TabsTrigger>
+          <TabsTrigger value='font' data-testid='panels-tab-font-review' className='gap-1'>
+            <ClipboardCheckIcon className='size-3.5' />
+            <span className='text-xs font-semibold tracking-wide uppercase'>字体</span>
+          </TabsTrigger>
+          {codexSignedIn && (
             <TabsTrigger value='ai' data-testid='panels-tab-ai' className='gap-1'>
               <SparklesIcon className='size-3.5' />
               <span className='text-xs font-semibold tracking-wide uppercase'>
                 {t('panels.ai')}
               </span>
             </TabsTrigger>
-          </TabsList>
-        )}
+          )}
+        </TabsList>
 
         <TabsContent
           value='text'
@@ -96,6 +109,14 @@ export function Panels() {
           data-testid='panels-textblocks-tab'
         >
           <TextBlocksPanel />
+        </TabsContent>
+
+        <TabsContent
+          value='font'
+          className='flex min-h-0 flex-1 data-[state=inactive]:hidden'
+          data-testid='panels-font-review'
+        >
+          <FontReviewPanel />
         </TabsContent>
 
         {codexSignedIn && (

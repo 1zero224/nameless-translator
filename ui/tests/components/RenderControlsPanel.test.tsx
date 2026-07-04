@@ -102,6 +102,11 @@ describe('RenderControlsPanel Font Assignment', () => {
     expect(lastOp).toHaveProperty('updateNode')
     expect(lastOp.updateNode.id).toBe('t1')
     expect(lastOp.updateNode.patch.data.text.style.fontFamilies).toEqual(['Roboto'])
+    expect(lastOp.updateNode.patch.data.text.workflow.fontTrace).toMatchObject({
+      selectedFont: 'Roboto',
+      autoApplied: false,
+      manualOverride: true,
+    })
   })
 
   it('bulk applying a font change (with selection) updates all selected boxes', async () => {

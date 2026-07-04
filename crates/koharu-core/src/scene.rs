@@ -15,7 +15,7 @@ use utoipa::ToSchema;
 use uuid::Uuid;
 
 use crate::blob::BlobRef;
-use crate::font::{FontPrediction, TextDirection};
+use crate::font::{FontPrediction, NamedFontPrediction, TextDirection};
 use crate::style::TextStyle;
 
 // ---------------------------------------------------------------------------
@@ -135,11 +135,279 @@ impl Default for ProjectMeta {
     }
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, ToSchema)]
+#[derive(Clone, Debug, Default, Serialize, JsonSchema, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ProjectStyle {
     #[serde(default)]
     pub default_font: Option<String>,
+    #[serde(default)]
+    pub font_profile: Option<FontStyleProfile>,
+    #[serde(default)]
+    pub font_policy: FontPolicy,
+    #[serde(default)]
+    pub font_review_queue: Vec<FontReviewQueueItem>,
+}
+
+impl<'de> Deserialize<'de> for ProjectStyle {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        const FIELDS: &[&str] = &[
+            "defaultFont",
+            "fontProfile",
+            "fontPolicy",
+            "fontReviewQueue",
+        ];
+
+        if deserializer.is_human_readable() {
+            return ProjectStyleRepr::deserialize(deserializer).map(Into::into);
+        }
+        deserializer.deserialize_struct("ProjectStyle", FIELDS, ProjectStyleVisitor)
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ProjectStyleRepr {
+    #[serde(default)]
+    default_font: Option<String>,
+    #[serde(default)]
+    font_profile: Option<FontStyleProfile>,
+    #[serde(default)]
+    font_policy: FontPolicy,
+    #[serde(default)]
+    font_review_queue: Vec<FontReviewQueueItem>,
+}
+
+impl From<ProjectStyleRepr> for ProjectStyle {
+    fn from(value: ProjectStyleRepr) -> Self {
+        Self {
+            default_font: value.default_font,
+            font_profile: value.font_profile,
+            font_policy: value.font_policy,
+            font_review_queue: value.font_review_queue,
+        }
+    }
+}
+
+struct ProjectStyleVisitor;
+
+impl<'de> serde::de::Visitor<'de> for ProjectStyleVisitor {
+    type Value = ProjectStyle;
+
+    fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("ProjectStyle")
+    }
+
+    fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+    where
+        A: serde::de::SeqAccess<'de>,
+    {
+        let default_font = seq.next_element()?.unwrap_or_default();
+        let Some(font_profile) = optional_tail(&mut seq)? else {
+            return Ok(ProjectStyle {
+                default_font,
+                ..Default::default()
+            });
+        };
+        let Some(font_policy) = optional_tail(&mut seq)? else {
+            return Ok(ProjectStyle {
+                default_font,
+                font_profile,
+                ..Default::default()
+            });
+        };
+        let Some(font_review_queue) = optional_tail(&mut seq)? else {
+            return Ok(ProjectStyle {
+                default_font,
+                font_profile,
+                font_policy,
+                ..Default::default()
+            });
+        };
+        Ok(ProjectStyle {
+            default_font,
+            font_profile,
+            font_policy,
+            font_review_queue,
+        })
+    }
+}
+
+fn optional_tail<'de, A, T>(seq: &mut A) -> Result<Option<T>, A::Error>
+where
+    A: serde::de::SeqAccess<'de>,
+    T: Deserialize<'de> + Default,
+{
+    match seq.next_element::<T>() {
+        Ok(value) => Ok(value.or_else(|| Some(T::default()))),
+        Err(_) => Ok(None),
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct FontStyleProfile {
+    pub id: String,
+    pub version: u32,
+    pub status: FontProfileStatus,
+    pub review_state: FontReviewState,
+    pub source: String,
+    pub profile_confidence: f32,
+    #[serde(default)]
+    pub profile_risks: Vec<FontProfileRisk>,
+    #[serde(default)]
+    pub style_groups: Vec<FontStyleGroup>,
+    #[serde(default)]
+    pub previous_versions: Vec<String>,
+    #[serde(default)]
+    pub change_log: Vec<FontProfileChange>,
+}
+
+impl Default for FontStyleProfile {
+    fn default() -> Self {
+        Self {
+            id: "font_profile_main".to_string(),
+            version: 1,
+            status: FontProfileStatus::AutoActive,
+            review_state: FontReviewState::Unreviewed,
+            source: "mimo_calibrated".to_string(),
+            profile_confidence: 0.0,
+            profile_risks: Vec::new(),
+            style_groups: Vec::new(),
+            previous_versions: Vec::new(),
+            change_log: Vec::new(),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum FontProfileStatus {
+    AutoDraft,
+    AutoActive,
+    ReviewedActive,
+    Archived,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum FontReviewState {
+    Unreviewed,
+    Reviewed,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct FontProfileRisk {
+    #[serde(default, rename = "type")]
+    pub kind: String,
+    #[serde(default)]
+    pub severity: String,
+    #[serde(default)]
+    pub message: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct FontStyleGroup {
+    pub id: String,
+    pub label: String,
+    pub role: FontStyleRole,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub source_categories: Vec<String>,
+    #[serde(default)]
+    pub preserve_source_style: bool,
+    pub target_bucket: String,
+    #[serde(default)]
+    pub representative_blocks: Vec<NodeId>,
+    #[serde(default)]
+    pub confidence: f32,
+    #[serde(default)]
+    pub needs_review: bool,
+    #[serde(default)]
+    pub risk_reasons: Vec<String>,
+    #[serde(default)]
+    pub distinguishing_features: Vec<String>,
+    #[serde(default)]
+    pub possible_confusions: Vec<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum FontStyleRole {
+    BubbleBody,
+    BubbleEmphasis,
+    OutsideBubble,
+    Caption,
+    Sfx,
+    Unknown,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct FontProfileChange {
+    pub version: u32,
+    pub change: String,
+    #[serde(default)]
+    pub affected_blocks: Vec<NodeId>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct FontPolicy {
+    #[serde(default)]
+    pub buckets: IndexMap<String, FontBucket>,
+    #[serde(default)]
+    pub fallback_font: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct FontBucket {
+    #[serde(default)]
+    pub fonts: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct FontReviewQueueItem {
+    pub id: String,
+    pub block_id: NodeId,
+    pub profile_id: String,
+    pub profile_version: u32,
+    pub style_group_id: String,
+    pub review_priority: FontReviewPriority,
+    #[serde(default)]
+    pub risk_reasons: Vec<String>,
+    #[serde(default)]
+    pub suggested_action: String,
+    #[serde(default)]
+    pub status: FontReviewItemStatus,
+}
+
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema, ToSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum FontReviewPriority {
+    #[default]
+    None,
+    Medium,
+    High,
+}
+
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema, ToSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum FontReviewItemStatus {
+    #[default]
+    Open,
+    Resolved,
 }
 
 // ---------------------------------------------------------------------------
@@ -521,6 +789,50 @@ pub struct FontWorkflowTrace {
     pub selected_font: Option<String>,
     #[serde(default)]
     pub notes: Vec<String>,
+    #[serde(default)]
+    pub provider: Option<String>,
+    #[serde(default)]
+    pub profile_id: Option<String>,
+    #[serde(default)]
+    pub profile_version: Option<u32>,
+    #[serde(default)]
+    pub profile_status: Option<FontProfileStatus>,
+    #[serde(default)]
+    pub yuzumarker_candidates: Vec<NamedFontPrediction>,
+    #[serde(default)]
+    pub text_role: Option<FontStyleRole>,
+    #[serde(default)]
+    pub style_group_id: Option<String>,
+    #[serde(default)]
+    pub source_primary_category: Option<String>,
+    #[serde(default)]
+    pub source_secondary_category: Option<String>,
+    #[serde(default)]
+    pub source_weight: Option<String>,
+    #[serde(default)]
+    pub source_emphasis: Option<String>,
+    #[serde(default)]
+    pub preserve_source_style: Option<bool>,
+    #[serde(default)]
+    pub recommended_font_bucket: Option<String>,
+    #[serde(default)]
+    pub policy: Option<String>,
+    #[serde(default)]
+    pub confidence: Option<f32>,
+    #[serde(default)]
+    pub auto_applied: Option<bool>,
+    #[serde(default)]
+    pub needs_review: Option<bool>,
+    #[serde(default)]
+    pub review_priority: FontReviewPriority,
+    #[serde(default)]
+    pub risk_reasons: Vec<String>,
+    #[serde(default)]
+    pub manual_override: bool,
+    #[serde(default)]
+    pub previous_font_families: Vec<String>,
+    #[serde(default)]
+    pub previous_font_size: Option<f32>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, ToSchema)]
@@ -620,6 +932,121 @@ mod tests {
         let style = ProjectStyle::default();
         let bytes = postcard::to_allocvec(&style).expect("serialize");
         let _: ProjectStyle = postcard::from_bytes(&bytes).expect("deserialize");
+    }
+
+    #[test]
+    fn project_style_deserializes_old_postcard_shape() {
+        #[derive(Serialize)]
+        struct OldProjectStyle {
+            default_font: Option<String>,
+        }
+
+        let bytes = postcard::to_allocvec(&OldProjectStyle {
+            default_font: Some("LegacyFont".to_string()),
+        })
+        .expect("serialize old style");
+
+        let decoded: ProjectStyle = postcard::from_bytes(&bytes).expect("deserialize old style");
+
+        assert_eq!(decoded.default_font.as_deref(), Some("LegacyFont"));
+        assert!(decoded.font_profile.is_none());
+        assert!(decoded.font_policy.buckets.is_empty());
+        assert!(decoded.font_review_queue.is_empty());
+    }
+
+    #[test]
+    fn font_profile_and_trace_json_round_trip() {
+        let block_id = NodeId::new();
+        let mut policy = FontPolicy::default();
+        policy.buckets.insert(
+            "body".to_string(),
+            FontBucket {
+                fonts: vec!["SourceHanSansSC-Bold".to_string()],
+            },
+        );
+        let style = ProjectStyle {
+            default_font: Some("SourceHanSansSC-Bold".to_string()),
+            font_profile: Some(FontStyleProfile {
+                id: "font_profile_main".to_string(),
+                version: 2,
+                status: FontProfileStatus::AutoActive,
+                review_state: FontReviewState::Unreviewed,
+                source: "mimo_calibrated".to_string(),
+                profile_confidence: 0.82,
+                profile_risks: vec![FontProfileRisk {
+                    kind: "mixed_body_baseline".to_string(),
+                    severity: "medium".to_string(),
+                    message: "body mixes categories".to_string(),
+                }],
+                style_groups: vec![FontStyleGroup {
+                    id: "body_bubble_primary".to_string(),
+                    label: "气泡正文".to_string(),
+                    role: FontStyleRole::BubbleBody,
+                    description: "normal dialogue".to_string(),
+                    source_categories: vec!["mincho".to_string(), "gothic".to_string()],
+                    preserve_source_style: false,
+                    target_bucket: "body".to_string(),
+                    representative_blocks: vec![block_id],
+                    confidence: 0.9,
+                    needs_review: false,
+                    risk_reasons: Vec::new(),
+                    distinguishing_features: vec!["inside speech bubbles".to_string()],
+                    possible_confusions: Vec::new(),
+                }],
+                previous_versions: vec!["v1".to_string()],
+                change_log: vec![FontProfileChange {
+                    version: 2,
+                    change: "Changed target bucket".to_string(),
+                    affected_blocks: vec![block_id],
+                }],
+            }),
+            font_policy: policy,
+            font_review_queue: vec![FontReviewQueueItem {
+                id: "font-review-1".to_string(),
+                block_id,
+                profile_id: "font_profile_main".to_string(),
+                profile_version: 2,
+                style_group_id: "body_bubble_primary".to_string(),
+                review_priority: FontReviewPriority::Medium,
+                risk_reasons: vec!["style_group_unreviewed".to_string()],
+                suggested_action: "review_style_group".to_string(),
+                status: FontReviewItemStatus::Open,
+            }],
+        };
+        let trace = FontWorkflowTrace {
+            provider: Some("mimo_yuzumarker_guided".to_string()),
+            profile_id: Some("font_profile_main".to_string()),
+            profile_version: Some(2),
+            profile_status: Some(FontProfileStatus::AutoActive),
+            style_group_id: Some("body_bubble_primary".to_string()),
+            text_role: Some(FontStyleRole::BubbleBody),
+            recommended_font_bucket: Some("body".to_string()),
+            selected_font: Some("SourceHanSansSC-Bold".to_string()),
+            confidence: Some(0.88),
+            auto_applied: Some(true),
+            needs_review: Some(false),
+            review_priority: FontReviewPriority::None,
+            manual_override: false,
+            ..Default::default()
+        };
+
+        let encoded = serde_json::to_string(&serde_json::json!({
+            "style": style,
+            "trace": trace,
+        }))
+        .expect("serialize profile payload");
+        let decoded: serde_json::Value = serde_json::from_str(&encoded).expect("json");
+
+        assert_eq!(
+            decoded["style"]["fontProfile"]["styleGroups"][0]["targetBucket"],
+            "body"
+        );
+        assert_eq!(
+            decoded["style"]["fontReviewQueue"][0]["reviewPriority"],
+            "medium"
+        );
+        assert_eq!(decoded["trace"]["profileVersion"], 2);
+        assert_eq!(decoded["trace"]["provider"], "mimo_yuzumarker_guided");
     }
 
     #[test]

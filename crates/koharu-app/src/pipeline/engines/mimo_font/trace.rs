@@ -36,6 +36,7 @@ pub(super) fn workflow_with_mimo_trace(text: &TextData, outcome: &MimoFontOutcom
             .as_ref()
             .map(|candidate| candidate.post_script_name.clone()),
         notes,
+        ..Default::default()
     });
     workflow
 }

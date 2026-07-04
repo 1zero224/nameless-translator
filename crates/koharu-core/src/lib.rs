@@ -34,9 +34,11 @@ pub use protocol::{
     PipelineConfigPatch, PipelineLlmRequest, ProviderPatch, ReadingOrder, Region,
 };
 pub use scene::{
-    FontWorkflowTrace, ImageData, ImageRole, MaskData, MaskRole, Node, NodeId, NodeKind,
-    NodeKindTag, Page, PageId, ProjectMeta, ProjectStyle, RepairWorkflowTrace, Scene, TextData,
-    TextResultMode, TextSelection, TextSelectionShape, TextWorkflow, TextWorkflowMode, Transform,
-    WorkflowStatus,
+    FontBucket, FontPolicy, FontProfileChange, FontProfileRisk, FontProfileStatus,
+    FontReviewItemStatus, FontReviewPriority, FontReviewQueueItem, FontReviewState, FontStyleGroup,
+    FontStyleProfile, FontStyleRole, FontWorkflowTrace, ImageData, ImageRole, MaskData, MaskRole,
+    Node, NodeId, NodeKind, NodeKindTag, Page, PageId, ProjectMeta, ProjectStyle,
+    RepairWorkflowTrace, Scene, TextData, TextResultMode, TextSelection, TextSelectionShape,
+    TextWorkflow, TextWorkflowMode, Transform, WorkflowStatus,
 };
 pub use style::{TextAlign, TextShaderEffect, TextStrokeStyle, TextStyle};

@@ -140,6 +140,7 @@ pub fn workflow_with_font_trace(text: &TextData, prediction: &FontPrediction) ->
         notes: selected
             .map(|font| vec![format!("yuzumarker probability {:.3}", font.probability)])
             .unwrap_or_default(),
+        ..Default::default()
     });
     workflow
 }
