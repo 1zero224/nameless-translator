@@ -79,7 +79,7 @@ export function useLassoDrafting({
   }, [finalize, mode, reset])
 
   const bind = () => ({
-    onClick: (event: React.MouseEvent<Element>) => {
+    onPointerDown: (event: React.PointerEvent<Element>) => {
       if (!page || mode !== 'lasso' || event.button !== 0 || event.detail > 1) return
       const point = pointerToDocument(event)
       if (!point) return

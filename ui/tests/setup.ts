@@ -63,6 +63,7 @@ Object.defineProperty(globalThis, 'IntersectionObserver', {
 
 // Hotkeys + gesture libs call scroll/focus methods jsdom doesn't implement.
 Element.prototype.scrollIntoView = vi.fn()
+Element.prototype.setPointerCapture = vi.fn()
 Element.prototype.releasePointerCapture = vi.fn()
 Element.prototype.hasPointerCapture = vi.fn(() => false)
 

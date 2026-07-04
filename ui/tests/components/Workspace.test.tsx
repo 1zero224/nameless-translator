@@ -1,4 +1,5 @@
-import { screen } from '@testing-library/react'
+import { fireEvent, screen, waitFor } from '@testing-library/react'
+import { http, HttpResponse } from 'msw'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { Workspace } from '@/components/canvas/Workspace'
@@ -9,6 +10,7 @@ import { useEditorUiStore } from '@/lib/stores/editorUiStore'
 import { useSelectionStore } from '@/lib/stores/selectionStore'
 
 import { renderWithQuery } from '../helpers'
+import { server } from '../msw/server'
 
 let getContextSpy: ReturnType<typeof vi.spyOn> | null = null
 const brushBlockDraftState = vi.hoisted(() => ({ hasDraft: false }))
@@ -174,5 +176,108 @@ describe('Workspace repair result display', () => {
     const canvas = screen.getByTestId('workspace-canvas')
     expect(canvas.contains(actions)).toBe(false)
     expect(actions).toHaveClass('right-4')
+  })
+
+  it('shows lasso draft points while clicking the canvas in lasso mode', async () => {
+    queryClient.setQueryData(getGetSceneJsonQueryKey(), sceneWithDualModeBlock('repair'))
+    useEditorUiStore.setState({ mode: 'lasso' })
+
+    renderWithQuery(<Workspace />)
+
+    const canvas = screen.getByTestId('workspace-canvas')
+    vi.spyOn(canvas, 'getBoundingClientRect').mockReturnValue({
+      x: 0,
+      y: 0,
+      top: 0,
+      left: 0,
+      right: 100,
+      bottom: 100,
+      width: 100,
+      height: 100,
+      toJSON: () => ({}),
+    } as DOMRect)
+
+    fireEvent.pointerDown(canvas, {
+      button: 0,
+      buttons: 1,
+      clientX: 24,
+      clientY: 32,
+      pointerId: 1,
+    })
+
+    const draft = await screen.findByTestId('workspace-lasso-draft')
+    expect(draft).toBeInTheDocument()
+    expect(draft.querySelector('circle')).toHaveAttribute('cx', '24')
+    expect(draft.querySelector('circle')).toHaveAttribute('cy', '32')
+  })
+
+  it('creates a polygon text block from lasso points on double click', async () => {
+    let lastOp: any = null
+    server.use(
+      http.post('/api/v1/history/apply', async ({ request }) => {
+        lastOp = await request.json()
+        return HttpResponse.json({ epoch: 2 })
+      }),
+    )
+    queryClient.setQueryData(getGetSceneJsonQueryKey(), sceneWithDualModeBlock('repair'))
+    useEditorUiStore.setState({ mode: 'lasso' })
+    vi.spyOn(crypto, 'randomUUID').mockReturnValue('lasso-node-id')
+
+    renderWithQuery(<Workspace />)
+
+    const canvas = screen.getByTestId('workspace-canvas')
+    vi.spyOn(canvas, 'getBoundingClientRect').mockReturnValue({
+      x: 0,
+      y: 0,
+      top: 0,
+      left: 0,
+      right: 100,
+      bottom: 100,
+      width: 100,
+      height: 100,
+      toJSON: () => ({}),
+    } as DOMRect)
+
+    fireEvent.pointerDown(canvas, { button: 0, buttons: 1, clientX: 20, clientY: 20, pointerId: 1 })
+    fireEvent.pointerDown(canvas, { button: 0, buttons: 1, clientX: 80, clientY: 25, pointerId: 1 })
+    fireEvent.pointerDown(canvas, { button: 0, buttons: 1, clientX: 50, clientY: 70, pointerId: 1 })
+    fireEvent.pointerDown(canvas, {
+      button: 0,
+      buttons: 1,
+      clientX: 50,
+      clientY: 70,
+      detail: 2,
+      pointerId: 1,
+    })
+    fireEvent.doubleClick(canvas, { button: 0, clientX: 50, clientY: 70, detail: 2 })
+
+    await waitFor(() => expect(lastOp).not.toBeNull())
+    expect(lastOp).toMatchObject({
+      addNode: {
+        page: 'p1',
+        node: {
+          id: 'lasso-node-id',
+          transform: { x: 20, y: 20, width: 60, height: 50, rotationDeg: 0 },
+          kind: {
+            text: {
+              workflow: {
+                selection: {
+                  shapes: [
+                    {
+                      kind: 'polygon',
+                      points: [
+                        [20, 20],
+                        [80, 25],
+                        [50, 70],
+                      ],
+                    },
+                  ],
+                },
+              },
+            },
+          },
+        },
+      },
+    })
   })
 })
