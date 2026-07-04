@@ -432,12 +432,6 @@ export function Workspace() {
                             <RepairLayerImage key={layer.id} layer={layer} />
                           ))}
                       </div>
-                      {brushBlockDrawing.hasDraft && (
-                        <BrushBlockDraftActions
-                          onConfirm={() => void brushBlockDrawing.finalize()}
-                          onCancel={brushBlockDrawing.reset}
-                        />
-                      )}
                       {draftBlock && (
                         <div
                           className='pointer-events-none absolute rounded-md border-2 border-dashed border-primary bg-primary/10'
@@ -481,6 +475,12 @@ export function Workspace() {
             <ScrollAreaPrimitive.Thumb className='rounded bg-muted-foreground/40' />
           </ScrollAreaPrimitive.Scrollbar>
         </ScrollAreaPrimitive.Root>
+        {brushBlockDrawing.hasDraft && (
+          <BrushBlockDraftActions
+            onConfirm={() => void brushBlockDrawing.finalize()}
+            onCancel={brushBlockDrawing.reset}
+          />
+        )}
       </div>
     </div>
   )
@@ -496,7 +496,7 @@ function BrushBlockDraftActions({
   return (
     <div
       data-testid='workspace-brush-block-actions'
-      className='absolute top-3 left-1/2 z-50 flex -translate-x-1/2 items-center gap-1 rounded-md border border-border bg-card/95 p-1 shadow-lg'
+      className='absolute top-14 right-4 z-[80] flex items-center gap-1 rounded-md border border-border bg-card/95 p-1 shadow-lg'
     >
       <Tooltip>
         <TooltipTrigger asChild>

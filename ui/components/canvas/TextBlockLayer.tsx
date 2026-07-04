@@ -12,6 +12,7 @@ import { ops } from '@/lib/ops'
 import { useEditorUiStore } from '@/lib/stores/editorUiStore'
 import { useSelectionStore } from '@/lib/stores/selectionStore'
 import { resolveRotationDrag, type Point } from '@/lib/textBlockTransforms'
+import { translateWorkflowSelectionForTransform } from '@/lib/textSelectionTransforms'
 
 type TextBlockLayerProps = {
   showSprites?: boolean
@@ -64,9 +65,18 @@ export function TextBlockLayer({
 
   const updateTransform = async (id: string, t: Transform) => {
     if (!page) return
+    const node = page.nodes[id]
+    if (!node || !('text' in node.kind)) return
+    const previous = node.transform ?? { x: 0, y: 0, width: 0, height: 0, rotationDeg: 0 }
+    const translatedWorkflow = translateWorkflowSelectionForTransform(
+      node.kind.text.workflow,
+      previous,
+      t,
+    )
     const data: NodeDataPatch = {
       text: {
         lockLayoutBox: true,
+        ...(translatedWorkflow ? { workflow: translatedWorkflow } : {}),
       },
     }
     await applyOp(ops.updateNode(page.id, id, { transform: t, data }))
@@ -81,6 +91,8 @@ export function TextBlockLayer({
     { enabled: hasSelection && interactive },
     [selectedIds, interactive],
   )
+
+  const pageSize = page ? { width: page.width, height: page.height } : { width: 0, height: 0 }
 
   return (
     <div
@@ -104,6 +116,7 @@ export function TextBlockLayer({
           node={n}
           index={i}
           scale={scale}
+          pageSize={pageSize}
           selected={selectedIds.has(n.id)}
           interactive={interactive}
           onSelect={(id, additive) => select(id, additive)}
@@ -118,10 +131,16 @@ type TextBlockItemProps = {
   node: TextNodeEntry
   index: number
   scale: number
+  pageSize: PageSize
   selected: boolean
   interactive: boolean
   onSelect: (id: string, additive: boolean) => void
   onCommit: (transform: Transform) => void
+}
+
+type PageSize = {
+  width: number
+  height: number
 }
 
 const isAdditiveEvent = (event: unknown): boolean => {
@@ -144,6 +163,7 @@ function TextBlockItem({
   node,
   index,
   scale,
+  pageSize,
   selected,
   interactive,
   onSelect,
@@ -287,6 +307,8 @@ function TextBlockItem({
   const w = t.width * scale
   const h = t.height * scale
   const rotationDeg = t.rotationDeg ?? 0
+  const selectionShapes = node.data.workflow?.selection?.shapes
+  const hasShapedSelection = hasNonRectangleSelection(selectionShapes)
 
   return (
     <div
@@ -307,14 +329,21 @@ function TextBlockItem({
         cursor: interactive ? 'move' : 'default',
       }}
     >
-      <SelectionShapeOverlay shapes={node.data.workflow?.selection?.shapes} transform={t} />
-      <div
-        className={`pointer-events-none absolute inset-0 rounded-md ${
-          selected
-            ? 'border-[3px] border-primary bg-primary/5'
-            : 'border-2 border-rose-400/60 bg-transparent'
-        }`}
+      <SelectionShapeOverlay
+        shapes={selectionShapes}
+        transform={t}
+        pageSize={pageSize}
+        scale={scale}
       />
+      {!hasShapedSelection && (
+        <div
+          className={`pointer-events-none absolute inset-0 rounded-md ${
+            selected
+              ? 'border-[3px] border-primary bg-primary/5'
+              : 'border-2 border-rose-400/60 bg-transparent'
+          }`}
+        />
+      )}
       <div
         className={`pointer-events-none absolute -top-1.5 -left-1.5 flex h-4 w-4 items-center justify-center rounded-full text-[9px] font-semibold text-white shadow ${
           selected ? 'bg-primary' : 'bg-rose-400'
@@ -335,28 +364,60 @@ function TextBlockItem({
 function SelectionShapeOverlay({
   shapes,
   transform,
+  pageSize,
+  scale,
 }: {
   shapes?: TextSelectionShape[] | null
   transform: Transform
+  pageSize: PageSize
+  scale: number
 }) {
   if (!shapes || shapes.length === 0) {
     return <DefaultSelectionFill />
   }
+  const hasBrush = shapes.some((shape) => shape.kind === 'brush')
   return (
-    <div className='pointer-events-none absolute inset-0 overflow-hidden rounded-md'>
+    <div
+      className={`pointer-events-none absolute inset-0 ${
+        hasBrush ? 'overflow-visible' : 'overflow-hidden rounded-md'
+      }`}
+    >
       {shapes.map((shape, index) => (
-        <SelectionShape key={index} shape={shape} transform={transform} />
+        <SelectionShape
+          key={index}
+          shape={shape}
+          transform={transform}
+          pageSize={pageSize}
+          scale={scale}
+        />
       ))}
     </div>
   )
 }
 
-function SelectionShape({ shape, transform }: { shape: TextSelectionShape; transform: Transform }) {
+function SelectionShape({
+  shape,
+  transform,
+  pageSize,
+  scale,
+}: {
+  shape: TextSelectionShape
+  transform: Transform
+  pageSize: PageSize
+  scale: number
+}) {
   switch (shape.kind) {
     case 'polygon':
       return <PolygonSelectionShape shape={shape} transform={transform} />
     case 'brush':
-      return <BrushSelectionShape shape={shape} />
+      return (
+        <BrushSelectionShape
+          shape={shape}
+          transform={transform}
+          pageSize={pageSize}
+          scale={scale}
+        />
+      )
     case 'rectangle':
       return <RectangleSelectionShape shape={shape} transform={transform} />
   }
@@ -400,13 +461,29 @@ function PolygonSelectionShape({
   )
 }
 
-function BrushSelectionShape({ shape }: { shape: Extract<TextSelectionShape, { kind: 'brush' }> }) {
+function BrushSelectionShape({
+  shape,
+  transform,
+  pageSize,
+  scale,
+}: {
+  shape: Extract<TextSelectionShape, { kind: 'brush' }>
+  transform: Transform
+  pageSize: PageSize
+  scale: number
+}) {
   const { data: src } = useBlobImage(shape.mask)
 
   return (
     <div
       data-testid='text-block-selection-brush'
-      className='absolute inset-0 overflow-hidden rounded-md bg-rose-400/10'
+      className='absolute overflow-visible'
+      style={{
+        left: -transform.x * scale,
+        top: -transform.y * scale,
+        width: Math.max(1, pageSize.width * scale),
+        height: Math.max(1, pageSize.height * scale),
+      }}
       aria-hidden='true'
     >
       {src ? (
@@ -442,6 +519,10 @@ function RectangleSelectionShape({
       aria-hidden='true'
     />
   )
+}
+
+function hasNonRectangleSelection(shapes?: TextSelectionShape[] | null): boolean {
+  return !!shapes?.some((shape) => shape.kind === 'polygon' || shape.kind === 'brush')
 }
 
 function pointFromEvent(event: unknown): Point | null {

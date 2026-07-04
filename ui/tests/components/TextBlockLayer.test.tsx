@@ -121,4 +121,32 @@ describe('TextBlockLayer', () => {
     expect(screen.getByTestId('text-block-selection-polygon')).toBeInTheDocument()
     expect(screen.getByTestId('text-block-selection-brush')).toBeInTheDocument()
   })
+
+  it('does not draw an extra transform rectangle around shaped selections', () => {
+    queryClient.setQueryData(getGetSceneJsonQueryKey(), sceneWithShapedTextBlocks())
+    useSelectionStore.getState().selectMany(['polygon', 'brush'])
+
+    renderWithQuery(<TextBlockLayer scale={1} />)
+
+    expect(
+      screen.getByTestId('text-block-polygon').querySelector('[class*="border-primary"]'),
+    ).toBeNull()
+    expect(
+      screen.getByTestId('text-block-brush').querySelector('[class*="border-primary"]'),
+    ).toBeNull()
+  })
+
+  it('renders brush masks in page coordinates instead of stretching them to the stroke bounds', () => {
+    queryClient.setQueryData(getGetSceneJsonQueryKey(), sceneWithShapedTextBlocks())
+    useSelectionStore.getState().selectMany(['brush'])
+
+    renderWithQuery(<TextBlockLayer scale={1} />)
+
+    expect(screen.getByTestId('text-block-selection-brush')).toHaveStyle({
+      left: '-8px',
+      top: '-14px',
+      width: '200px',
+      height: '200px',
+    })
+  })
 })

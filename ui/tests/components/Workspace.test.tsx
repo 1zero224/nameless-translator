@@ -11,6 +11,7 @@ import { useSelectionStore } from '@/lib/stores/selectionStore'
 import { renderWithQuery } from '../helpers'
 
 let getContextSpy: ReturnType<typeof vi.spyOn> | null = null
+const brushBlockDraftState = vi.hoisted(() => ({ hasDraft: false }))
 
 vi.mock('@/hooks/useBlobData', async () => {
   const actual = await vi.importActual<typeof import('@/hooks/useBlobData')>('@/hooks/useBlobData')
@@ -30,6 +31,17 @@ vi.mock('@/components/Image', () => ({
     visible?: boolean
     [key: string]: unknown
   }) => (data && visible ? <div {...props} /> : null),
+}))
+
+vi.mock('@/hooks/useBrushBlockDrafting', () => ({
+  useBrushBlockDrafting: () => ({
+    canvasRef: { current: null },
+    bind: () => ({}),
+    visible: brushBlockDraftState.hasDraft,
+    hasDraft: brushBlockDraftState.hasDraft,
+    finalize: vi.fn(),
+    reset: vi.fn(),
+  }),
 }))
 
 function sceneWithDualModeBlock(resultMode: 'lettering' | 'repair'): SceneSnapshot {
@@ -118,6 +130,7 @@ describe('Workspace repair result display', () => {
       showRenderedImage: false,
       showRepairResultLayers: true,
     })
+    brushBlockDraftState.hasDraft = false
   })
 
   afterEach(() => {
@@ -148,5 +161,18 @@ describe('Workspace repair result display', () => {
     renderWithQuery(<Workspace />)
 
     expect(screen.queryByTestId('workspace-repair-layer-repair1')).not.toBeInTheDocument()
+  })
+
+  it('keeps brush block confirm actions outside of the scrollable image canvas', () => {
+    queryClient.setQueryData(getGetSceneJsonQueryKey(), sceneWithDualModeBlock('repair'))
+    useEditorUiStore.setState({ mode: 'brushBlock' })
+    brushBlockDraftState.hasDraft = true
+
+    renderWithQuery(<Workspace />)
+
+    const actions = screen.getByTestId('workspace-brush-block-actions')
+    const canvas = screen.getByTestId('workspace-canvas')
+    expect(canvas.contains(actions)).toBe(false)
+    expect(actions).toHaveClass('right-4')
   })
 })
