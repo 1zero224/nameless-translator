@@ -72,11 +72,18 @@ async fn delete_codex_session(State(app): State<AppState>) -> ApiResult<StatusCo
 )]
 async fn start_codex_image_generation(
     State(app): State<AppState>,
-    Json(req): Json<CodexImageGenerationOptions>,
+    Json(mut req): Json<CodexImageGenerationOptions>,
 ) -> ApiResult<Json<CodexImageGenerationResponse>> {
     let session = app
         .current_session()
         .ok_or_else(|| ApiError::bad_request("no project open"))?;
+    if req
+        .model
+        .as_ref()
+        .is_none_or(|model| model.trim().is_empty())
+    {
+        req.model = Some(app.config.load().ai_models.gpt_image.clone());
+    }
 
     let operation_id = Uuid::new_v4().to_string();
     let cancel = Arc::new(AtomicBool::new(false));

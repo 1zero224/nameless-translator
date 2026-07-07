@@ -201,6 +201,8 @@ pub struct ConfigPatch {
     pub http: Option<HttpConfigPatch>,
     #[serde(default)]
     pub pipeline: Option<PipelineConfigPatch>,
+    #[serde(default)]
+    pub ai_models: Option<AiModelsConfigPatch>,
     /// If present, replaces the entire list. Api_key values of `"[REDACTED]"`
     /// are interpreted as "leave the existing secret alone".
     #[serde(default)]
@@ -233,6 +235,14 @@ pub struct PipelineConfigPatch {
     pub inpainter: Option<String>,
     pub repairer: Option<String>,
     pub renderer: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct AiModelsConfigPatch {
+    pub gpt_image: Option<String>,
+    pub mimo_text: Option<String>,
+    pub mimo_vision: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, ToSchema)]

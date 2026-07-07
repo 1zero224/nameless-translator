@@ -1026,9 +1026,52 @@
           }
         }
       },
+      "AiModelsConfig": {
+        "type": "object",
+        "properties": {
+          "gpt_image": {
+            "type": "string",
+            "default": "gpt-image-2"
+          },
+          "mimo_text": {
+            "type": "string",
+            "default": "mimo-v2.5-pro"
+          },
+          "mimo_vision": {
+            "type": "string",
+            "default": "mimo-v2.5"
+          }
+        }
+      },
+      "AiModelsConfigPatch": {
+        "type": "object",
+        "properties": {
+          "gptImage": {
+            "type": ["string", "null"]
+          },
+          "mimoText": {
+            "type": ["string", "null"]
+          },
+          "mimoVision": {
+            "type": ["string", "null"]
+          }
+        }
+      },
       "AppConfig": {
         "type": "object",
         "properties": {
+          "ai_models": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/AiModelsConfig"
+              }
+            ],
+            "default": {
+              "gpt_image": "gpt-image-2",
+              "mimo_text": "mimo-v2.5-pro",
+              "mimo_vision": "mimo-v2.5"
+            }
+          },
           "data": {
             "oneOf": [
               {
@@ -1361,6 +1404,16 @@
         "type": "object",
         "description": "Sparse patch for `koharu_app::AppConfig`. Missing fields mean \"leave\nas-is\". The `providers` field, if present, replaces the whole provider\nlist — we do not merge by id because ordering is meaningful.",
         "properties": {
+          "aiModels": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/AiModelsConfigPatch"
+              }
+            ]
+          },
           "data": {
             "oneOf": [
               {

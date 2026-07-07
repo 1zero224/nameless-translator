@@ -205,7 +205,13 @@ impl GptImageRepairConfig {
         let base_url = non_empty_env("GPT_IMAGE_BASE_URL")
             .or_else(|| openai_provider.and_then(|provider| provider.base_url.clone()))
             .unwrap_or_else(|| DEFAULT_BASE_URL.to_string());
-        let model = non_empty_env("GPT_IMAGE_MODEL").unwrap_or_else(|| DEFAULT_MODEL.to_string());
+        let model = non_empty_env("GPT_IMAGE_MODEL")
+            .or_else(|| {
+                app_config
+                    .as_ref()
+                    .map(|config| config.ai_models.gpt_image.clone())
+            })
+            .unwrap_or_else(|| DEFAULT_MODEL.to_string());
         Ok(Self {
             base_url,
             api_key,

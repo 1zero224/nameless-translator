@@ -68,6 +68,7 @@ import {
   useGetCodexAuthStatus,
 } from '@/lib/api/default/default'
 import type {
+  AiModelsConfig,
   AppConfig,
   ConfigPatch,
   CodexDeviceLogin,
@@ -118,6 +119,13 @@ function appConfigToPatch(cfg: AppConfig): ConfigPatch {
       renderer: cfg.pipeline.renderer,
     }
   }
+  if (cfg.ai_models) {
+    patch.aiModels = {
+      gptImage: cfg.ai_models.gpt_image,
+      mimoText: cfg.ai_models.mimo_text,
+      mimoVision: cfg.ai_models.mimo_vision,
+    }
+  }
   if (cfg.providers) {
     patch.providers = cfg.providers.map((p) => ({
       id: p.id,
@@ -155,6 +163,21 @@ type SettingsDialogProps = {
 const DEFAULT_HTTP_CONNECT_TIMEOUT = 20
 const DEFAULT_HTTP_READ_TIMEOUT = 300
 const DEFAULT_HTTP_MAX_RETRIES = 3
+const DEFAULT_AI_MODELS = {
+  gpt_image: 'gpt-image-2',
+  mimo_text: 'mimo-v2.5-pro',
+  mimo_vision: 'mimo-v2.5',
+} satisfies Required<AiModelsConfig>
+
+type AiModelKey = keyof typeof DEFAULT_AI_MODELS
+
+function normalizeAiModelDrafts(models?: Partial<AiModelsConfig> | null): typeof DEFAULT_AI_MODELS {
+  return {
+    gpt_image: models?.gpt_image?.trim() || DEFAULT_AI_MODELS.gpt_image,
+    mimo_text: models?.mimo_text?.trim() || DEFAULT_AI_MODELS.mimo_text,
+    mimo_vision: models?.mimo_vision?.trim() || DEFAULT_AI_MODELS.mimo_vision,
+  }
+}
 
 export function SettingsDialog({
   open,
@@ -175,6 +198,9 @@ export function SettingsDialog({
   const [httpConnectTimeoutDraft, setHttpConnectTimeoutDraft] = useState('')
   const [httpReadTimeoutDraft, setHttpReadTimeoutDraft] = useState('')
   const [httpMaxRetriesDraft, setHttpMaxRetriesDraft] = useState('')
+  const [aiModelDrafts, setAiModelDrafts] = useState(DEFAULT_AI_MODELS)
+  const [isSavingAiModels, setIsSavingAiModels] = useState(false)
+  const [aiModelsSaved, setAiModelsSaved] = useState(false)
   const [storageSettingsError, setStorageSettingsError] = useState<string | null>(null)
   const [isSavingStorageSettings, setIsSavingStorageSettings] = useState(false)
   const [engineCatalog, setEngineCatalog] = useState<GetEngineCatalog200 | null>(null)
@@ -221,13 +247,15 @@ export function SettingsDialog({
   }, [open, checkForUpdates])
 
   useEffect(() => {
-    if (!appConfig?.data) return
-    setDataPathDraft(appConfig.data.path)
+    if (!appConfig) return
+    setDataPathDraft(appConfig.data?.path ?? '')
     setHttpConnectTimeoutDraft(
       String(appConfig.http?.connect_timeout ?? DEFAULT_HTTP_CONNECT_TIMEOUT),
     )
     setHttpReadTimeoutDraft(String(appConfig.http?.read_timeout ?? DEFAULT_HTTP_READ_TIMEOUT))
     setHttpMaxRetriesDraft(String(appConfig.http?.max_retries ?? DEFAULT_HTTP_MAX_RETRIES))
+    setAiModelDrafts(normalizeAiModelDrafts(appConfig.ai_models))
+    setAiModelsSaved(false)
     setStorageSettingsError(null)
   }, [appConfig])
 
@@ -312,6 +340,27 @@ export function SettingsDialog({
     httpReadTimeoutDraft.trim() ===
       String(appConfig?.http?.read_timeout ?? DEFAULT_HTTP_READ_TIMEOUT) &&
     httpMaxRetriesDraft.trim() === String(appConfig?.http?.max_retries ?? DEFAULT_HTTP_MAX_RETRIES)
+  const aiModelValues = normalizeAiModelDrafts(appConfig?.ai_models)
+  const aiModelsUnchanged =
+    aiModelDrafts.gpt_image.trim() === aiModelValues.gpt_image &&
+    aiModelDrafts.mimo_text.trim() === aiModelValues.mimo_text &&
+    aiModelDrafts.mimo_vision.trim() === aiModelValues.mimo_vision
+
+  const handleSaveAiModels = async () => {
+    if (!appConfig) return
+    setIsSavingAiModels(true)
+    setAiModelsSaved(false)
+    const nextModels = normalizeAiModelDrafts(aiModelDrafts)
+    const saved = await persistConfig({
+      ...appConfig,
+      ai_models: nextModels,
+    })
+    setIsSavingAiModels(false)
+    if (!saved) return
+    setAiModelDrafts(normalizeAiModelDrafts(saved.ai_models))
+    setAiModelsSaved(true)
+    window.setTimeout(() => setAiModelsSaved(false), 1200)
+  }
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -398,7 +447,19 @@ export function SettingsDialog({
                   }}
                 />
               )}
-              {tab === 'ai' && <CodexSettingsPane />}
+              {tab === 'ai' && (
+                <AiSettingsPane
+                  drafts={aiModelDrafts}
+                  saved={aiModelsSaved}
+                  saving={isSavingAiModels}
+                  unchanged={aiModelsUnchanged}
+                  onChange={(key, value) => {
+                    setAiModelsSaved(false)
+                    setAiModelDrafts((current) => ({ ...current, [key]: value }))
+                  }}
+                  onSave={() => void handleSaveAiModels()}
+                />
+              )}
               {tab === 'runtime' && (
                 <StoragePane
                   dataPath={dataPathDraft}
@@ -692,7 +753,105 @@ function ProvidersPane({
   )
 }
 
-// ── Keybinds ──────────────────────────────────────────────────────
+// ── AI ────────────────────────────────────────────────────────────
+
+function AiSettingsPane({
+  drafts,
+  saved,
+  saving,
+  unchanged,
+  onChange,
+  onSave,
+}: {
+  drafts: typeof DEFAULT_AI_MODELS
+  saved: boolean
+  saving: boolean
+  unchanged: boolean
+  onChange: (key: AiModelKey, value: string) => void
+  onSave: () => void
+}) {
+  const { t } = useTranslation()
+
+  return (
+    <div className='space-y-6'>
+      <Section title={t('settings.aiModels')} description={t('settings.aiModelsDescription')}>
+        <div className='grid gap-3'>
+          <ModelInput
+            id='settings-gpt-image-model'
+            label={t('settings.gptImageModel')}
+            description={t('settings.gptImageModelDescription')}
+            value={drafts.gpt_image}
+            onChange={(value) => onChange('gpt_image', value)}
+          />
+          <ModelInput
+            id='settings-mimo-text-model'
+            label={t('settings.mimoTextModel')}
+            description={t('settings.mimoTextModelDescription')}
+            value={drafts.mimo_text}
+            onChange={(value) => onChange('mimo_text', value)}
+          />
+          <ModelInput
+            id='settings-mimo-vision-model'
+            label={t('settings.mimoVisionModel')}
+            description={t('settings.mimoVisionModelDescription')}
+            value={drafts.mimo_vision}
+            onChange={(value) => onChange('mimo_vision', value)}
+          />
+        </div>
+        <div className='mt-4 flex items-center justify-between gap-3'>
+          <p className='text-xs text-muted-foreground'>
+            {saved ? t('settings.saved') : t('settings.aiModelsSaveHint')}
+          </p>
+          <Button
+            size='sm'
+            className='gap-1.5'
+            disabled={saving || unchanged}
+            data-testid='settings-ai-models-save'
+            onClick={onSave}
+          >
+            {saving ? (
+              <LoaderIcon className='size-3.5 animate-spin' />
+            ) : (
+              <SaveIcon className='size-3.5' />
+            )}
+            {t('settings.save')}
+          </Button>
+        </div>
+      </Section>
+      <CodexSettingsPane />
+    </div>
+  )
+}
+
+function ModelInput({
+  id,
+  label,
+  description,
+  value,
+  onChange,
+}: {
+  id: string
+  label: string
+  description: string
+  value: string
+  onChange: (value: string) => void
+}) {
+  return (
+    <div className='space-y-1.5'>
+      <Label htmlFor={id} className='text-xs'>
+        {label}
+      </Label>
+      <Input
+        id={id}
+        data-testid={id}
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        className='h-8 text-xs'
+      />
+      <p className='text-[11px] leading-relaxed text-muted-foreground'>{description}</p>
+    </div>
+  )
+}
 
 function CodexSettingsPane() {
   const { t } = useTranslation()

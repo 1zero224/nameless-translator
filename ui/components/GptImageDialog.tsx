@@ -17,7 +17,11 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import type { TextNodeEntry } from '@/hooks/useCurrentPage'
-import { startCodexImageGeneration, useGetCodexAuthStatus } from '@/lib/api/default/default'
+import {
+  startCodexImageGeneration,
+  useGetCodexAuthStatus,
+  useGetConfig,
+} from '@/lib/api/default/default'
 import { useEditorUiStore } from '@/lib/stores/editorUiStore'
 import { useJobsStore } from '@/lib/stores/jobsStore'
 
@@ -64,6 +68,7 @@ export function GptImageDialog({
   const [instructions, setInstructions] = useState(DEFAULT_INSTRUCTIONS)
   const [busy, setBusy] = useState(false)
   const { data: auth } = useGetCodexAuthStatus({ query: { enabled: open } })
+  const { data: config } = useGetConfig({ query: { enabled: open } })
   const setShowRepairResultLayers = useEditorUiStore((s) => s.setShowRepairResultLayers)
   const showError = useEditorUiStore((s) => s.showError)
   const isProcessing = useJobsStore((s) =>
@@ -79,6 +84,10 @@ export function GptImageDialog({
   useEffect(() => {
     if (open) setPrompt(builtInPrompt)
   }, [builtInPrompt, open])
+
+  useEffect(() => {
+    if (open) setModel(config?.ai_models?.gpt_image?.trim() || DEFAULT_MODEL)
+  }, [config?.ai_models?.gpt_image, open])
 
   const handleSubmit = async () => {
     if (!canGenerate || !pageId || !textNode) return

@@ -62,6 +62,7 @@ pub struct AppConfig {
     pub data: DataConfig,
     pub http: HttpConfig,
     pub pipeline: PipelineConfig,
+    pub ai_models: AiModelsConfig,
     pub providers: Vec<ProviderConfig>,
 }
 
@@ -94,6 +95,24 @@ impl Default for PipelineConfig {
             inpainter: "lama-manga".to_string(),
             repairer: "gpt-image-2-repair".to_string(),
             renderer: "koharu-renderer".to_string(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(default)]
+pub struct AiModelsConfig {
+    pub gpt_image: String,
+    pub mimo_text: String,
+    pub mimo_vision: String,
+}
+
+impl Default for AiModelsConfig {
+    fn default() -> Self {
+        Self {
+            gpt_image: "gpt-image-2".to_string(),
+            mimo_text: "mimo-v2.5-pro".to_string(),
+            mimo_vision: "mimo-v2.5".to_string(),
         }
     }
 }
@@ -162,7 +181,7 @@ pub fn load() -> Result<AppConfig> {
         config
     };
 
-    if validate_pipeline_config(&mut config) {
+    if validate_pipeline_config(&mut config) | normalize_ai_models(&mut config) {
         save(&config)?;
     }
 
@@ -242,6 +261,18 @@ pub fn apply_patch(config: &mut AppConfig, patch: koharu_core::ConfigPatch) {
             config.pipeline.renderer = v;
         }
     }
+    if let Some(models) = patch.ai_models {
+        let defaults = AiModelsConfig::default();
+        if let Some(v) = models.gpt_image {
+            config.ai_models.gpt_image = normalize_model_value(v, &defaults.gpt_image);
+        }
+        if let Some(v) = models.mimo_text {
+            config.ai_models.mimo_text = normalize_model_value(v, &defaults.mimo_text);
+        }
+        if let Some(v) = models.mimo_vision {
+            config.ai_models.mimo_vision = normalize_model_value(v, &defaults.mimo_vision);
+        }
+    }
     if let Some(providers) = patch.providers {
         let mut new_providers = Vec::with_capacity(providers.len());
         for p in providers {
@@ -264,6 +295,32 @@ pub fn apply_patch(config: &mut AppConfig, patch: koharu_core::ConfigPatch) {
     }
 
     validate_pipeline_config(config);
+    normalize_ai_models(config);
+}
+
+fn normalize_ai_models(config: &mut AppConfig) -> bool {
+    let defaults = AiModelsConfig::default();
+    normalize_model_field(&mut config.ai_models.gpt_image, &defaults.gpt_image)
+        | normalize_model_field(&mut config.ai_models.mimo_text, &defaults.mimo_text)
+        | normalize_model_field(&mut config.ai_models.mimo_vision, &defaults.mimo_vision)
+}
+
+fn normalize_model_field(configured: &mut String, default: &str) -> bool {
+    let normalized = normalize_model_value(configured.as_str(), default);
+    if normalized == configured.as_str() {
+        return false;
+    }
+    *configured = normalized;
+    true
+}
+
+fn normalize_model_value(value: impl AsRef<str>, default: &str) -> String {
+    let trimmed = value.as_ref().trim();
+    if trimmed.is_empty() {
+        default.to_string()
+    } else {
+        trimmed.to_string()
+    }
 }
 
 fn validate_pipeline_config(config: &mut AppConfig) -> bool {
@@ -422,7 +479,7 @@ fn provider_api_key_secret_key(provider_id: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use koharu_core::{ConfigPatch, PipelineConfigPatch};
+    use koharu_core::{AiModelsConfigPatch, ConfigPatch, PipelineConfigPatch};
 
     #[test]
     fn old_config_without_providers_still_loads() {
@@ -491,6 +548,60 @@ mod tests {
         assert_eq!(
             PipelineConfig::default().font_detector,
             "mimo-font-selection"
+        );
+    }
+
+    #[test]
+    fn default_ai_models_use_gpt_image_and_mimo() {
+        let models = AiModelsConfig::default();
+
+        assert_eq!(models.gpt_image, "gpt-image-2");
+        assert_eq!(models.mimo_text, "mimo-v2.5-pro");
+        assert_eq!(models.mimo_vision, "mimo-v2.5");
+    }
+
+    #[test]
+    fn apply_patch_updates_ai_models_and_resets_empty_values() {
+        let mut config = AppConfig::default();
+        apply_patch(
+            &mut config,
+            ConfigPatch {
+                ai_models: Some(AiModelsConfigPatch {
+                    gpt_image: Some("gpt-image-custom".to_string()),
+                    mimo_text: Some("mimo-text-custom".to_string()),
+                    mimo_vision: Some("mimo-vision-custom".to_string()),
+                }),
+                ..Default::default()
+            },
+        );
+
+        assert_eq!(config.ai_models.gpt_image, "gpt-image-custom");
+        assert_eq!(config.ai_models.mimo_text, "mimo-text-custom");
+        assert_eq!(config.ai_models.mimo_vision, "mimo-vision-custom");
+
+        apply_patch(
+            &mut config,
+            ConfigPatch {
+                ai_models: Some(AiModelsConfigPatch {
+                    gpt_image: Some(" ".to_string()),
+                    mimo_text: Some(String::new()),
+                    mimo_vision: Some("\t".to_string()),
+                }),
+                ..Default::default()
+            },
+        );
+
+        assert_eq!(
+            config.ai_models.gpt_image,
+            AiModelsConfig::default().gpt_image
+        );
+        assert_eq!(
+            config.ai_models.mimo_text,
+            AiModelsConfig::default().mimo_text
+        );
+        assert_eq!(
+            config.ai_models.mimo_vision,
+            AiModelsConfig::default().mimo_vision
         );
     }
 

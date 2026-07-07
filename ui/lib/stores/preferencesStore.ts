@@ -68,7 +68,7 @@ const initialPreferences = {
   },
   codexImagePrompt:
     'Translate all visible text to natural English, remove the original lettering, and redraw the page as a clean manga image while preserving the artwork, panel layout, speech bubbles, tone, and composition.',
-  codexImageModel: 'gpt-5.5',
+  codexImageModel: 'gpt-image-2',
   customPipeline: {
     detect: true,
     ocr: true,

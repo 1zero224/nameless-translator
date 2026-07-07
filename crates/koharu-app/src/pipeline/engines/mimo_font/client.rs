@@ -32,7 +32,12 @@ impl MimoFontConfig {
             })
             .context("MIMO font selection requires MIMO_API_KEY or a mimo provider secret")?;
         let model = non_empty_env("MIMO_VISION_MODEL")
-            .context("MIMO font selection requires MIMO_VISION_MODEL")?;
+            .or_else(|| {
+                app_config
+                    .as_ref()
+                    .map(|config| config.ai_models.mimo_vision.clone())
+            })
+            .unwrap_or_else(|| crate::config::AiModelsConfig::default().mimo_vision);
         let max_completion_tokens = non_empty_env("MIMO_MAX_COMPLETION_TOKENS")
             .and_then(|value| value.parse::<u32>().ok())
             .unwrap_or(DEFAULT_MAX_COMPLETION_TOKENS);

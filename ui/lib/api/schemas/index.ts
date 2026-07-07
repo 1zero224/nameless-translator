@@ -5,6 +5,8 @@
 
 export * from './addImageLayerParams';
 export * from './addImageLayerResponse';
+export * from './aiModelsConfig';
+export * from './aiModelsConfigPatch';
 export * from './appConfig';
 export * from './appEvent';
 export * from './blobRef';

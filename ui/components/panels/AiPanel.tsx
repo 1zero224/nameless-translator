@@ -9,7 +9,11 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { useCurrentPage } from '@/hooks/useCurrentPage'
-import { startCodexImageGeneration, useGetCodexAuthStatus } from '@/lib/api/default/default'
+import {
+  startCodexImageGeneration,
+  useGetCodexAuthStatus,
+  useGetConfig,
+} from '@/lib/api/default/default'
 import { useEditorUiStore } from '@/lib/stores/editorUiStore'
 import { useJobsStore } from '@/lib/stores/jobsStore'
 import { usePreferencesStore } from '@/lib/stores/preferencesStore'
@@ -25,13 +29,14 @@ export function AiPanel() {
   const showError = useEditorUiStore((s) => s.showError)
   const [busy, setBusy] = useState(false)
   const { data: auth } = useGetCodexAuthStatus()
+  const { data: config } = useGetConfig()
   const isProcessing = useJobsStore((s) =>
     Object.values(s.jobs).some((job) => job.status === 'running'),
   )
 
   const signedIn = auth?.signedIn === true
   const promptReady = !!prompt?.trim()
-  const modelValue = model?.trim() || 'gpt-5.5'
+  const modelValue = model?.trim() || config?.ai_models?.gpt_image?.trim() || 'gpt-image-2'
   const canGenerate = signedIn && !!page && promptReady && !isProcessing && !busy
 
   const handleGenerate = async () => {

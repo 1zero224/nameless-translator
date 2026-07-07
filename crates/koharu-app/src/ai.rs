@@ -25,7 +25,7 @@ use crate::pipeline::support::{
 };
 use crate::session::ProjectSession;
 
-const DEFAULT_CODEX_IMAGE_MODEL: &str = "gpt-5.5";
+const DEFAULT_CODEX_IMAGE_MODEL: &str = "gpt-image-2";
 const DEFAULT_CODEX_IMAGE_INSTRUCTIONS: &str = "Generate or edit the requested image.";
 const DEFAULT_CODEX_IMAGE_QUALITY: &str = "high";
 
