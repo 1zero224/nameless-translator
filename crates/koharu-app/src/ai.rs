@@ -20,7 +20,7 @@ use utoipa::ToSchema;
 use uuid::Uuid;
 
 use crate::blobs::BlobStore;
-use crate::pipeline::engines::support::{
+use crate::pipeline::support::{
     build_bound_repair_layer_ops, openai_edit_mask_for_text, repair_layer_image_from_edit_output,
 };
 use crate::session::ProjectSession;
