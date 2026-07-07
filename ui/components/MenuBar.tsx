@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { fitCanvasToViewport, resetCanvasScale } from '@/components/Canvas'
+import { GptImageDialog } from '@/components/GptImageDialog'
 import { SettingsDialog, type TabId } from '@/components/SettingsDialog'
 import {
   Menubar,
@@ -20,6 +21,7 @@ import {
   MenubarSubContent,
   MenubarSubTrigger,
 } from '@/components/ui/menubar'
+import { useCurrentPage, useSelectedTextNode } from '@/hooks/useCurrentPage'
 import { useScene } from '@/hooks/useScene'
 import { getConfig, startPipeline } from '@/lib/api/default/default'
 import { isTauri, openExternalUrl } from '@/lib/backend'
@@ -57,20 +59,20 @@ type MenuItem = {
   testId?: string
 }
 
-type MenuSection = {
-  label: string
-  items: MenuItem[]
-  triggerTestId?: string
-}
-
 export function MenuBar() {
   const { t } = useTranslation()
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [settingsTab, setSettingsTab] = useState<TabId>('appearance')
+  const [gptImageOpen, setGptImageOpen] = useState(false)
   const hasPage = useSelectionStore((s) => s.pageId !== null)
   const hasScene = useScene().scene !== null
+  const page = useCurrentPage()
+  const selectedTextNode = useSelectedTextNode()
   const isPipelineRunning = useJobsStore((s) =>
     Object.values(s.jobs).some((job) => job.kind === 'pipeline' && job.status === 'running'),
+  )
+  const isAnyJobRunning = useJobsStore((s) =>
+    Object.values(s.jobs).some((job) => job.status === 'running'),
   )
   const shortcuts = usePreferencesStore((state) => state.shortcuts)
   const customPipeline = usePreferencesStore((state) => state.customPipeline)
@@ -336,6 +338,14 @@ export function MenuBar() {
             >
               {t('menu.processAll')}
             </MenubarItem>
+            <MenubarItem
+              data-testid='menu-process-gpt-image'
+              className='text-[13px]'
+              disabled={!page || !selectedTextNode || isAnyJobRunning}
+              onSelect={() => setGptImageOpen(true)}
+            >
+              {t('menu.gptImage')}
+            </MenubarItem>
             <MenubarSeparator />
             <MenubarItem
               data-testid='menu-process-custom-current'
@@ -433,6 +443,12 @@ export function MenuBar() {
       <div data-tauri-drag-region className='flex h-full flex-1 items-center justify-center' />
       {isWindowsTauri && <WindowControls />}
       <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} defaultTab={settingsTab} />
+      <GptImageDialog
+        open={gptImageOpen}
+        onOpenChange={setGptImageOpen}
+        pageId={page?.id ?? null}
+        textNode={selectedTextNode}
+      />
     </div>
   )
 }

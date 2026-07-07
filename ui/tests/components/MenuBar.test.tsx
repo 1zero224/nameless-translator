@@ -13,6 +13,9 @@ import { useSelectionStore } from '@/lib/stores/selectionStore'
 import { renderWithQuery } from '../helpers'
 import { server } from '../msw/server'
 
+const pageId = 'p1'
+const textNodeId = 't1'
+
 vi.mock('@/lib/io/openFiles', () => ({
   openImageFiles: vi.fn().mockResolvedValue([]),
   openImageFolder: vi.fn().mockResolvedValue([]),
@@ -39,6 +42,39 @@ beforeEach(() => {
   })
   queryClient.setQueryData(getGetConfigQueryKey(), {})
 })
+
+function seedSceneWithTextNode() {
+  queryClient.setQueryData(getGetSceneJsonQueryKey(), {
+    epoch: 0,
+    scene: {
+      project: { name: 'P' },
+      pages: {
+        [pageId]: {
+          id: pageId,
+          name: 'p1',
+          width: 100,
+          height: 100,
+          nodes: {
+            [textNodeId]: {
+              id: textNodeId,
+              visible: true,
+              transform: { x: 10, y: 12, width: 40, height: 20, rotationDeg: 5 },
+              kind: {
+                text: {
+                  confidence: 1,
+                  text: '原文テキスト',
+                  translation: '中文译文',
+                  workflow: { modes: ['repair'], resultMode: 'repair' },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  })
+  useSelectionStore.getState().setPage(pageId)
+}
 
 describe('MenuBar', () => {
   it('renders File / View / Process / Help triggers', async () => {
@@ -148,6 +184,49 @@ describe('MenuBar', () => {
       'data-disabled',
     )
     expect(await screen.findByTestId('menu-process-custom-all')).toHaveAttribute('data-disabled')
+  })
+
+  it('disables GPT Image menu action without a selected text block', async () => {
+    seedSceneWithTextNode()
+
+    renderWithQuery(<MenuBar />)
+
+    await userEvent.click(screen.getByTestId('menu-process-trigger'))
+
+    expect(await screen.findByTestId('menu-process-gpt-image')).toHaveAttribute('data-disabled')
+  })
+
+  it('opens GPT Image dialog with a prompt from the selected text block and posts textNodeId', async () => {
+    const aiRequests: unknown[] = []
+    seedSceneWithTextNode()
+    useSelectionStore.getState().select(textNodeId)
+    server.use(
+      http.get('/api/v1/ai/codex/auth/status', () =>
+        HttpResponse.json({ signedIn: true, accountId: 'acct-test' }),
+      ),
+      http.post('/api/v1/ai/codex/images', async ({ request }) => {
+        aiRequests.push(await request.json())
+        return HttpResponse.json({ operationId: 'op-ai' })
+      }),
+    )
+
+    renderWithQuery(<MenuBar />)
+
+    await userEvent.click(screen.getByTestId('menu-process-trigger'))
+    await userEvent.click(await screen.findByTestId('menu-process-gpt-image'))
+
+    const prompt = await screen.findByTestId('gpt-image-prompt')
+    expect((prompt as HTMLTextAreaElement).value).toContain('原文テキスト')
+    expect((prompt as HTMLTextAreaElement).value).toContain('中文译文')
+
+    await userEvent.click(screen.getByTestId('gpt-image-submit'))
+
+    await waitFor(() => expect(aiRequests).toHaveLength(1))
+    expect(aiRequests[0]).toMatchObject({
+      pageId,
+      textNodeId,
+      prompt: expect.stringContaining('原文テキスト'),
+    })
   })
 
   it('Close Project calls DELETE /projects/current and invalidates scene', async () => {

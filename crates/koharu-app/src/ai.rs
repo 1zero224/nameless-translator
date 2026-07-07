@@ -5,12 +5,12 @@ use std::time::Duration;
 use anyhow::{Context, Result, anyhow, bail};
 use base64::Engine as _;
 use dashmap::DashMap;
-use image::DynamicImage;
+use image::{DynamicImage, ImageFormat};
 use koharu_ai::codex::{CodexClient, CodexConfig};
 use koharu_ai::{AiImageProvider, AiImageRequest};
 use koharu_core::{
     BlobRef, ImageData, ImageDataPatch, ImageRole, Node, NodeDataPatch, NodeId, NodeKind,
-    NodePatch, Op, PageId, Scene, Transform,
+    NodePatch, Op, PageId, Scene, TextData, Transform,
 };
 use koharu_runtime::{RuntimeHttpClient, RuntimeManager};
 use parking_lot::RwLock;
@@ -19,6 +19,10 @@ use tracing::Instrument as _;
 use utoipa::ToSchema;
 use uuid::Uuid;
 
+use crate::blobs::BlobStore;
+use crate::pipeline::engines::support::{
+    build_bound_repair_layer_ops, openai_edit_mask_for_text, repair_layer_image_from_edit_output,
+};
 use crate::session::ProjectSession;
 
 const DEFAULT_CODEX_IMAGE_MODEL: &str = "gpt-5.5";
@@ -69,6 +73,8 @@ pub struct CodexAuthStatus {
 pub struct CodexImageGenerationOptions {
     pub page_id: PageId,
     pub prompt: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text_node_id: Option<NodeId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -202,25 +208,25 @@ impl AiManager {
                 bail!("prompt is required");
             }
 
+            let model = options
+                .model
+                .filter(|value| !value.trim().is_empty())
+                .unwrap_or_else(|| DEFAULT_CODEX_IMAGE_MODEL.to_string());
+
             let source = tracing::info_span!("codex_source_image_load").in_scope(|| {
                 let scene = session.scene_snapshot();
                 let (_, image_data) = source_image(&scene, options.page_id)?;
                 session.blobs.load_image(&image_data.blob)
             })?;
+            let (source_width, source_height) = image_dimensions(&source);
 
             let source_data_url = tracing::info_span!("codex_source_image_encode")
                 .in_scope(|| image_data_url(&source))?;
             tracing::info!(bytes = source_data_url.len(), "encoded Codex source image");
 
             check_cancelled(&cancel)?;
-            let mut request = AiImageRequest::new(
-                options
-                    .model
-                    .filter(|value| !value.trim().is_empty())
-                    .unwrap_or_else(|| DEFAULT_CODEX_IMAGE_MODEL.to_string()),
-                prompt,
-            )
-            .with_input_image(source_data_url);
+            let mut request = AiImageRequest::new(model.clone(), prompt.clone())
+                .with_input_image(source_data_url);
             request.instructions = options
                 .instructions
                 .filter(|value| !value.trim().is_empty())
@@ -252,28 +258,41 @@ impl AiManager {
                 "loaded Codex generated image bytes"
             );
 
-            let (width, height, blob) = tracing::info_span!("codex_generated_image_store")
-                .in_scope(|| {
-                    let generated = image::load_from_memory(&generated_bytes)
-                        .with_context(|| "failed to decode Codex image result")?;
-                    let (width, height) = image_dimensions(&generated);
-                    let blob = session.blobs.put_webp(&generated)?;
-                    Ok::<_, anyhow::Error>((width, height, blob))
-                })?;
+            let generated = tracing::info_span!("codex_generated_image_decode").in_scope(|| {
+                image::load_from_memory(&generated_bytes)
+                    .with_context(|| "failed to decode Codex image result")
+            })?;
+            let (width, height) = image_dimensions(&generated);
             tracing::info!(width, height, "decoded and stored Codex generated image");
 
             check_cancelled(&cancel)?;
             let scene = session.scene_snapshot();
-            let op = upsert_image_blob(
-                &scene,
-                options.page_id,
-                ImageRole::Rendered,
-                blob,
-                width,
-                height,
-            )?;
+            let ops = if let Some(text_node_id) = options.text_node_id {
+                tracing::info!(%text_node_id, "storing Codex image as bound repair layer");
+                codex_repair_layer_ops(
+                    &scene,
+                    options.page_id,
+                    text_node_id,
+                    source_width,
+                    source_height,
+                    &generated,
+                    &session.blobs,
+                    &model,
+                    &prompt,
+                )?
+            } else {
+                let blob = session.blobs.put_webp(&generated)?;
+                vec![upsert_image_blob(
+                    &scene,
+                    options.page_id,
+                    ImageRole::Rendered,
+                    blob,
+                    width,
+                    height,
+                )?]
+            };
             session.apply(Op::Batch {
-                ops: vec![op],
+                ops,
                 label: format!("codex-image: page {}", options.page_id),
             })?;
             tracing::info!("finished Codex image generation workflow");
@@ -323,10 +342,15 @@ fn source_image(scene: &Scene, page_id: PageId) -> Result<(NodeId, &ImageData)> 
 }
 
 fn image_data_url(image: &DynamicImage) -> Result<String> {
-    let mut buf = Cursor::new(Vec::new());
-    image.write_to(&mut buf, image::ImageFormat::Png)?;
-    let encoded = base64::engine::general_purpose::STANDARD.encode(buf.into_inner());
+    let bytes = image_png_bytes(image)?;
+    let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
     Ok(format!("data:image/png;base64,{encoded}"))
+}
+
+fn image_png_bytes(image: &DynamicImage) -> Result<Vec<u8>> {
+    let mut buf = Cursor::new(Vec::new());
+    image.write_to(&mut buf, ImageFormat::Png)?;
+    Ok(buf.into_inner())
 }
 
 fn decode_data_image_url(url: &str) -> Result<Option<Vec<u8>>> {
@@ -345,6 +369,58 @@ fn decode_data_image_url(url: &str) -> Result<Option<Vec<u8>>> {
 fn image_dimensions(image: &DynamicImage) -> (u32, u32) {
     use image::GenericImageView as _;
     image.dimensions()
+}
+
+#[allow(clippy::too_many_arguments)]
+fn codex_repair_layer_ops(
+    scene: &Scene,
+    page: PageId,
+    text_id: NodeId,
+    source_width: u32,
+    source_height: u32,
+    generated: &DynamicImage,
+    blobs: &BlobStore,
+    model: &str,
+    prompt: &str,
+) -> Result<Vec<Op>> {
+    let (transform, text) = selected_text_node(scene, page, text_id)?;
+    let mask = openai_edit_mask_for_text(source_width, source_height, transform, text, Some(blobs));
+    let mask_image = DynamicImage::ImageRgba8(mask);
+    let mask_png = image_png_bytes(&mask_image)?;
+    let mask_blob = blobs.put_bytes(&mask_png)?;
+    let layer = repair_layer_image_from_edit_output(generated, &mask_image)?;
+    let natural_width = layer.width();
+    let natural_height = layer.height();
+    let layer_blob = blobs.put_raw(&DynamicImage::ImageRgba8(layer))?;
+    build_bound_repair_layer_ops(
+        scene,
+        page,
+        text_id,
+        layer_blob,
+        mask_blob,
+        natural_width,
+        natural_height,
+        model,
+        prompt,
+    )
+}
+
+fn selected_text_node(
+    scene: &Scene,
+    page: PageId,
+    text_id: NodeId,
+) -> Result<(&Transform, &TextData)> {
+    let page_ref = scene
+        .page(page)
+        .with_context(|| format!("page {} not found", page))?;
+    let node = page_ref
+        .nodes
+        .get(&text_id)
+        .with_context(|| format!("node {} not found", text_id))?;
+    let NodeKind::Text(text) = &node.kind else {
+        bail!("node {} is not text", text_id);
+    };
+    Ok((&node.transform, text))
 }
 
 fn upsert_image_blob(
@@ -412,6 +488,8 @@ fn upsert_image_blob(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use image::{Rgba, RgbaImage};
+    use koharu_core::{TextWorkflow, TextWorkflowMode, WorkflowStatus};
 
     #[test]
     fn decodes_data_image_url() {
@@ -427,5 +505,86 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
+    }
+
+    #[test]
+    fn codex_repair_layer_ops_adds_bound_custom_layer_for_selected_text() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let blobs = BlobStore::open(dir.path()).expect("blob store");
+        let page_id = PageId::new();
+        let text_id = NodeId::new();
+        let mut scene = Scene::default();
+        let mut page = koharu_core::Page::new("p1", 4, 4);
+        page.id = page_id;
+        page.nodes.insert(
+            text_id,
+            Node {
+                id: text_id,
+                transform: Transform {
+                    x: 1.0,
+                    y: 1.0,
+                    width: 2.0,
+                    height: 2.0,
+                    rotation_deg: 0.0,
+                },
+                visible: true,
+                kind: NodeKind::Text(TextData {
+                    text: Some("source".to_string()),
+                    translation: Some("translation".to_string()),
+                    workflow: TextWorkflow {
+                        modes: vec![TextWorkflowMode::Repair],
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                }),
+            },
+        );
+        scene.pages.insert(page_id, page);
+
+        let generated = RgbaImage::from_pixel(4, 4, Rgba([10, 20, 30, 255]));
+        let ops = codex_repair_layer_ops(
+            &scene,
+            page_id,
+            text_id,
+            4,
+            4,
+            &DynamicImage::ImageRgba8(generated),
+            &blobs,
+            "gpt-image-2",
+            "replace text",
+        )
+        .expect("repair ops");
+
+        assert_eq!(ops.len(), 2);
+        for mut op in ops {
+            op.apply(&mut scene).expect("apply repair op");
+        }
+
+        let page = scene.page(page_id).expect("page");
+        let text = match &page.nodes.get(&text_id).expect("text").kind {
+            NodeKind::Text(text) => text,
+            other => panic!("expected text node, got {other:?}"),
+        };
+        let layer_id = text.workflow.repair_layer.expect("repair layer");
+        assert_eq!(text.workflow.repair_status, WorkflowStatus::Succeeded);
+        let trace = text.workflow.repair_trace.as_ref().expect("repair trace");
+        assert_eq!(trace.model.as_deref(), Some("gpt-image-2"));
+        assert_eq!(trace.prompt.as_deref(), Some("replace text"));
+        assert!(trace.source_mask.is_some());
+
+        let layer_node = page.nodes.get(&layer_id).expect("layer node");
+        let NodeKind::Image(image) = &layer_node.kind else {
+            panic!("expected image repair layer");
+        };
+        assert_eq!(image.role, ImageRole::Custom);
+        assert_eq!(image.natural_width, 4);
+        assert_eq!(image.natural_height, 4);
+
+        let layer = blobs
+            .load_image(&image.blob)
+            .expect("layer image")
+            .to_rgba8();
+        assert_eq!(layer.get_pixel(1, 1).0, [10, 20, 30, 255]);
+        assert_eq!(layer.get_pixel(0, 0).0, [10, 20, 30, 0]);
     }
 }
